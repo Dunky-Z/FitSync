@@ -6,6 +6,7 @@ import json
 import uuid
 import base64
 import oss2
+import argparse
 
 from typing import Tuple
 
@@ -21,6 +22,7 @@ from tcxreader.tcxreader import TCXReader
 
 load_dotenv()
 logger = logging.getLogger()
+DEBUG = False  # 全局调试标志
 
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
@@ -30,52 +32,56 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 
-def main():
-    sport = ask_sport()
-    logger.info("Selected sport: %s", sport)
+def debug_print(message: str) -> None:
+    """只在调试模式下打印信息"""
+    if DEBUG:
+        print(message)
 
+
+def main():
+    global DEBUG
+    
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='Strava到IGPSport文件上传工具')
+    parser.add_argument('--debug', action='store_true', help='启用调试模式，显示详细信息')
+    args = parser.parse_args()
+    
+    DEBUG = args.debug
+    
+    if DEBUG:
+        print("🐛 调试模式已启用")
+    
     file_location = ask_file_location()
 
     if file_location == "Download":
         activity_id = ask_activity_id()
         logger.info("Selected activity ID: %s", activity_id)
-        logger.info("Downloading the TCX file from Strava")
-        existing_file = download_tcx_file(activity_id, sport)
+        print("正在从Strava下载文件...")
+        existing_file = download_tcx_file(activity_id)
 
         # 如果返回了现有文件路径，直接使用
         if existing_file:
             file_path = existing_file
-            logger.info(f"Using existing file: {file_path}")
+            debug_print(f"Using existing file: {file_path}")
         else:
             time.sleep(3)
             file_path = get_latest_download()
-            logger.info(f"Automatically detected downloaded file path: {file_path}")
+            debug_print(f"Automatically detected downloaded file path: {file_path}")
     else:
         file_path = ask_file_path(file_location)
 
     if file_path:
-        logger.info("Validating the file")
+        print("正在验证文件...")
         validate_file(file_path)
         
-        # IGPSport支持TCX格式，直接使用原文件
-        # 转换代码保留供后续扩展使用
-        # gpx_path = convert_to_gpx(file_path)
-        
         # 上传到IGPSport
-        logger.info("Uploading to IGPSport")
+        print("正在上传到IGPSport...")
         upload_to_igpsport(file_path)
     else:
         logger.error("No file path provided")
         raise ValueError("No file path provided")
 
-    logger.info("Process completed successfully!")
-
-
-def ask_sport() -> str:
-    return questionary.select(
-        "Which sport do you want to upload to IGPSport?",
-        choices=["Bike", "Run", "Swim", "Other"]
-    ).ask()
+    print("✅ 处理完成！")
 
 
 def ask_file_location() -> str:
@@ -97,30 +103,30 @@ def ask_activity_id() -> str:
     return re.sub(r"\D", "", activity_id)
 
 
-def download_tcx_file(activity_id: str, sport: str) -> str:
+def download_tcx_file(activity_id: str) -> str:
     # 统一使用export_original下载fit文件，不区分运动类型
     url = f"https://www.strava.com/activities/{activity_id}/export_original"
     
-    print(f"\n开始下载活动 {activity_id} 的原始文件...")
-    print(f"下载URL: {url}")
+    debug_print(f"\n开始下载活动 {activity_id} 的原始文件...")
+    debug_print(f"下载URL: {url}")
     
     # 检查是否已存在相同活动ID的文件
     existing_file = check_existing_activity_file(activity_id)
     if existing_file:
-        print(f"✅ 发现已存在的活动文件: {existing_file}")
+        print(f"✅ 发现已存在的活动文件: {os.path.basename(existing_file)}")
         confirm_use = questionary.confirm(
             f"是否使用已存在的文件: {os.path.basename(existing_file)}?",
             default=True
         ).ask()
         
         if confirm_use:
-            print(f"🔄 跳过下载，使用已存在的文件")
+            print("🔄 跳过下载，使用已存在的文件")
             return existing_file
         else:
             print("⏬ 继续下载新文件...")
     
     # 直接使用Cookie认证下载
-    download_with_cookie(url, activity_id, sport)
+    download_with_cookie(url, activity_id)
     return ""
 
 
@@ -142,17 +148,17 @@ def check_existing_activity_file(activity_id: str) -> str:
                 if file.endswith('.fit'):
                     # FIT文件是二进制格式，检查文件大小
                     if os.path.getsize(full_path) > 0:
-                        print(f"🔍 找到FIT文件: {file}")
+                        debug_print(f"🔍 找到FIT文件: {file}")
                         return full_path
                 else:
                     # XML格式文件
                     with open(full_path, 'r', encoding='utf-8') as f:
                         content = f.read()
                         if content and '<?xml' in content:
-                            print(f"🔍 找到XML文件: {file}")
+                            debug_print(f"🔍 找到XML文件: {file}")
                             return full_path
             except Exception as e:
-                print(f"⚠️ 文件检查失败 {file}: {e}")
+                debug_print(f"⚠️ 文件检查失败 {file}: {e}")
                 continue
     
     return ""
@@ -178,7 +184,7 @@ def save_cookie(cookie: str) -> None:
     try:
         with open(cookie_file, 'w', encoding='utf-8') as f:
             f.write(cookie.strip())
-        print("✅ Strava Cookie已保存，下次运行时将自动使用")
+        debug_print("✅ Strava Cookie已保存，下次运行时将自动使用")
     except Exception as e:
         logger.warning(f"保存Cookie文件失败: {e}")
 
@@ -203,24 +209,24 @@ def save_igpsport_cookie(cookie: str) -> None:
     try:
         with open(cookie_file, 'w', encoding='utf-8') as f:
             f.write(cookie.strip())
-        print("✅ IGPSport Cookie已保存，下次运行时将自动使用")
+        debug_print("✅ IGPSport Cookie已保存，下次运行时将自动使用")
     except Exception as e:
         logger.warning(f"保存IGPSport Cookie文件失败: {e}")
 
 
-def download_with_cookie(url: str, activity_id: str, sport: str) -> None:
+def download_with_cookie(url: str, activity_id: str) -> None:
     """使用Cookie进行认证下载"""
     
     # 首先尝试使用保存的Cookie
     saved_cookie = get_saved_cookie()
     
     if saved_cookie:
-        print("使用已保存的Cookie进行下载...")
+        debug_print("使用已保存的Cookie进行下载...")
         success = try_download_with_cookie(url, activity_id, saved_cookie)
         if success:
             return
         else:
-            print("保存的Cookie可能已过期，需要更新Cookie")
+            debug_print("保存的Cookie可能已过期，需要更新Cookie")
     
     # 如果没有保存的Cookie或Cookie已过期，提示用户输入新的Cookie
     print("\n要获取Strava Cookie，请按以下步骤操作：")
@@ -260,12 +266,12 @@ def try_download_with_cookie(url: str, activity_id: str, cookie: str) -> bool:
             'Referer': f'https://www.strava.com/activities/{activity_id}'
         }
         
-        print(f"🌐 发送下载请求...")
+        debug_print(f"🌐 发送下载请求...")
         response = requests.get(url, headers=headers, timeout=30)
         
-        print(f"📡 响应状态码: {response.status_code}")
-        print(f"📄 Content-Type: {response.headers.get('content-type', 'Unknown')}")
-        print(f"📊 Content-Length: {response.headers.get('content-length', 'Unknown')}")
+        debug_print(f"📡 响应状态码: {response.status_code}")
+        debug_print(f"📄 Content-Type: {response.headers.get('content-type', 'Unknown')}")
+        debug_print(f"📊 Content-Length: {response.headers.get('content-length', 'Unknown')}")
         
         if response.status_code == 200:
             content_type = response.headers.get('content-type', '').lower()
@@ -279,8 +285,8 @@ def try_download_with_cookie(url: str, activity_id: str, cookie: str) -> bool:
                 with open(download_path, 'wb') as f:
                     f.write(response.content)
                 
-                print(f"✅ FIT文件已成功下载到: {download_path}")
-                print(f"📁 文件大小: {len(response.content)} bytes")
+                print(f"✅ FIT文件已成功下载: {filename}")
+                debug_print(f"📁 文件大小: {len(response.content)} bytes")
                 return True
                 
             elif 'xml' in content_type or '<?xml' in response.text:
@@ -298,19 +304,19 @@ def try_download_with_cookie(url: str, activity_id: str, cookie: str) -> bool:
                 with open(download_path, 'w', encoding='utf-8') as f:
                     f.write(content)
                 
-                print(f"✅ XML文件已成功下载到: {download_path}")
-                print(f"📁 文件大小: {len(content)} characters")
+                print(f"✅ XML文件已成功下载: {filename}")
+                debug_print(f"📁 文件大小: {len(content)} characters")
                 return True
             else:
-                print(f"❌ 未知的文件格式，Content-Type: {content_type}")
-                print(f"📄 响应内容开头: {response.text[:200] if response.text else response.content[:200]}")
+                debug_print(f"❌ 未知的文件格式，Content-Type: {content_type}")
+                debug_print(f"📄 响应内容开头: {response.text[:200] if response.text else response.content[:200]}")
                 return False
         else:
-            print(f"❌ 下载失败 (状态码: {response.status_code})")
+            debug_print(f"❌ 下载失败 (状态码: {response.status_code})")
             return False
             
     except Exception as e:
-        print(f"❌ 下载出错: {e}")
+        debug_print(f"❌ 下载出错: {e}")
         return False
 
 
@@ -365,13 +371,13 @@ def validation(path: str) -> bool:
 
 def validate_file(file_path: str) -> None:
     """验证文件格式"""
-    print(f"🔍 验证文件: {file_path}")
+    debug_print(f"🔍 验证文件: {file_path}")
     
     if file_path.endswith('.fit'):
         # FIT文件验证
         try:
             file_size = os.path.getsize(file_path)
-            print(f"📁 FIT文件大小: {file_size} bytes")
+            debug_print(f"📁 FIT文件大小: {file_size} bytes")
             
             if file_size == 0:
                 logger.error("The FIT file is empty.")
@@ -381,7 +387,7 @@ def validate_file(file_path: str) -> None:
             with open(file_path, 'rb') as f:
                 header = f.read(4)
                 if len(header) >= 4:
-                    print(f"📄 FIT文件头: {header}")
+                    debug_print(f"📄 FIT文件头: {header}")
                 else:
                     logger.error("Invalid FIT file header.")
                     raise ValueError("Invalid FIT file header.")
@@ -396,7 +402,7 @@ def validate_file(file_path: str) -> None:
         with open(file_path, "r", encoding='utf-8') as file:
             content = file.read()
         
-        print(f"📁 XML文件大小: {len(content)} characters")
+        debug_print(f"📁 XML文件大小: {len(content)} characters")
         
         if not content:
             logger.error("The file is empty.")
@@ -490,7 +496,7 @@ def login_igpsport(username: str, password: str) -> str:
                               headers=headers, 
                               allow_redirects=False)
         
-        print(f"登录响应状态码: {response.status_code}")
+        debug_print(f"登录响应状态码: {response.status_code}")
         
         if response.status_code in [200, 302]:
             # 提取登录token
@@ -514,19 +520,19 @@ def login_igpsport(username: str, password: str) -> str:
                         save_igpsport_cookie(result['data']['token'])
                         return result['data']['token']
             except Exception as e:
-                print(f"解析响应失败: {e}")
+                debug_print(f"解析响应失败: {e}")
         
-        print(f"登录失败，响应内容: {response.text[:200] if response.text else 'No content'}")
+        debug_print(f"登录失败，响应内容: {response.text[:200] if response.text else 'No content'}")
         
     except Exception as e:
-        print(f"登录请求异常: {e}")
+        debug_print(f"登录请求异常: {e}")
     
     # 如果还是失败，提供一个选项让用户手动输入token
     manual_token = questionary.confirm(
         "自动登录失败，是否要手动输入IGPSport的loginToken?",
         default=False
     ).ask()
-    
+
     if manual_token:
         print("\n要获取IGPSport Token，请按以下步骤操作：")
         print("1. 在浏览器中打开 https://my.igpsport.com 并登录")
@@ -560,7 +566,7 @@ def test_igpsport_cookie(cookie: str) -> bool:
 
 def get_oss_token(login_token: str) -> dict:
     """获取阿里云OSS临时凭证"""
-    print("获取OSS上传凭证...")
+    debug_print("获取OSS上传凭证...")
     
     url = "https://prod.zh.igpsport.com/service/mobile/api/AliyunService/GetOssTokenForApp"
     headers = {
@@ -568,48 +574,48 @@ def get_oss_token(login_token: str) -> dict:
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
-    print(f"🌐 请求URL: {url}")
-    print(f"🔑 Authorization: Bearer {login_token[:20]}...")
+    debug_print(f"🌐 请求URL: {url}")
+    debug_print(f"🔑 Authorization: Bearer {login_token[:20]}...")
     
     response = requests.get(url, headers=headers)
     
-    print(f"📡 响应状态码: {response.status_code}")
-    print(f"📄 响应头: {dict(response.headers)}")
+    debug_print(f"📡 响应状态码: {response.status_code}")
+    debug_print(f"📄 响应头: {dict(response.headers)}")
     
     if response.status_code == 200:
         try:
             data = response.json()
-            print(f"📊 完整响应数据: {data}")
+            debug_print(f"📊 完整响应数据: {data}")
             
             if 'data' in data:
                 oss_data = data['data']
-                print("✅ OSS凭证获取成功")
-                print(f"🔑 AccessKeyId: {oss_data.get('accessKeyId', 'Not found')}")
-                print(f"🔑 SecurityToken前50字符: {oss_data.get('securityToken', 'Not found')[:50]}...")
+                debug_print("✅ OSS凭证获取成功")
+                debug_print(f"🔑 AccessKeyId: {oss_data.get('accessKeyId', 'Not found')}")
+                debug_print(f"🔑 SecurityToken前50字符: {oss_data.get('securityToken', 'Not found')[:50]}...")
                 return oss_data
             else:
-                print("❌ 响应中没有找到data字段")
-                print(f"📄 完整响应: {data}")
+                debug_print("❌ 响应中没有找到data字段")
+                debug_print(f"📄 完整响应: {data}")
         except Exception as e:
-            print(f"❌ JSON解析失败: {e}")
-            print(f"📄 响应文本: {response.text}")
+            debug_print(f"❌ JSON解析失败: {e}")
+            debug_print(f"📄 响应文本: {response.text}")
     else:
-        print("❌ 获取OSS凭证失败")
-        print(f"📄 响应文本: {response.text}")
+        debug_print("❌ 获取OSS凭证失败")
+        debug_print(f"📄 响应文本: {response.text}")
     
     raise ValueError("获取OSS凭证失败")
 
 
 def upload_to_oss(file_path: str, oss_credentials: dict) -> str:
     """上传文件到阿里云OSS"""
-    print("正在上传文件到OSS...")
+    debug_print("正在上传文件到OSS...")
     
     # 生成唯一的OSS文件名
     oss_name = f"1456042-{str(uuid.uuid4())}"
     
-    print(f"📁 本地文件: {file_path}")
-    print(f"☁️ OSS文件名: {oss_name}")
-    print(f"📊 文件大小: {os.path.getsize(file_path)} bytes")
+    debug_print(f"📁 本地文件: {file_path}")
+    debug_print(f"☁️ OSS文件名: {oss_name}")
+    debug_print(f"📊 文件大小: {os.path.getsize(file_path)} bytes")
     
     try:
         # 使用OSS凭证创建认证对象
@@ -626,44 +632,44 @@ def upload_to_oss(file_path: str, oss_credentials: dict) -> str:
             oss_credentials['bucketName']
         )
         
-        print(f"🌐 OSS Endpoint: {oss_credentials['endpoint']}")
-        print(f"🪣 OSS Bucket: {oss_credentials['bucketName']}")
-        print(f"🔑 使用AccessKey: {oss_credentials['accessKeyId']}")
+        debug_print(f"🌐 OSS Endpoint: {oss_credentials['endpoint']}")
+        debug_print(f"🪣 OSS Bucket: {oss_credentials['bucketName']}")
+        debug_print(f"🔑 使用AccessKey: {oss_credentials['accessKeyId']}")
         
         # 上传文件
-        print("📤 开始真正的OSS上传...")
+        debug_print("📤 开始真正的OSS上传...")
         result = bucket.put_object_from_file(oss_name, file_path)
         
-        print(f"📡 OSS上传结果状态: {result.status}")
-        print(f"🆔 请求ID: {result.request_id}")
-        print(f"🔗 ETag: {result.etag}")
+        debug_print(f"📡 OSS上传结果状态: {result.status}")
+        debug_print(f"🆔 请求ID: {result.request_id}")
+        debug_print(f"🔗 ETag: {result.etag}")
         
         if result.status == 200:
-            print("✅ 文件上传到OSS成功！")
+            print("✅ 文件上传成功")
             
             # 验证文件是否真的上传成功
             if bucket.object_exists(oss_name):
-                print("✅ 文件在OSS中确认存在")
+                debug_print("✅ 文件在OSS中确认存在")
                 
                 # 获取文件信息
                 meta = bucket.head_object(oss_name)
-                print(f"📊 OSS中文件大小: {meta.content_length} bytes")
-                print(f"📅 上传时间: {meta.last_modified}")
+                debug_print(f"📊 OSS中文件大小: {meta.content_length} bytes")
+                debug_print(f"📅 上传时间: {meta.last_modified}")
             else:
-                print("❌ 警告：文件在OSS中不存在")
+                debug_print("❌ 警告：文件在OSS中不存在")
         else:
-            print(f"❌ OSS上传失败，状态码: {result.status}")
+            debug_print(f"❌ OSS上传失败，状态码: {result.status}")
             raise Exception(f"OSS上传失败，状态码: {result.status}")
         
         return oss_name
         
     except Exception as e:
         logger.error(f"OSS上传失败: {e}")
-        print(f"❌ OSS上传异常: {e}")
-        print("📋 错误详情:")
-        print(f"  - AccessKeyId: {oss_credentials.get('accessKeyId', 'Missing')}")
-        print(f"  - Endpoint: {oss_credentials.get('endpoint', 'Missing')}")
-        print(f"  - BucketName: {oss_credentials.get('bucketName', 'Missing')}")
+        debug_print(f"❌ OSS上传异常: {e}")
+        debug_print("📋 错误详情:")
+        debug_print(f"  - AccessKeyId: {oss_credentials.get('accessKeyId', 'Missing')}")
+        debug_print(f"  - Endpoint: {oss_credentials.get('endpoint', 'Missing')}")
+        debug_print(f"  - BucketName: {oss_credentials.get('bucketName', 'Missing')}")
         raise
 
 
