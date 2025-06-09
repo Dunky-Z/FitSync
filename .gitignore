@@ -168,6 +168,7 @@ cython_debug/
 # IGPSport Cookie file (contains sensitive authentication data)
 .igpsport_cookie
 
+.strava_config.json
 # Log files
 logs.log
 

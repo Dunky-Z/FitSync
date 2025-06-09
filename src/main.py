@@ -7,8 +7,9 @@ import uuid
 import base64
 import oss2
 import argparse
+from datetime import datetime
 
-from typing import Tuple
+from typing import Tuple, List, Dict
 
 import pandas as pd
 import questionary
@@ -38,6 +39,219 @@ def debug_print(message: str) -> None:
         print(message)
 
 
+def get_strava_config() -> Dict[str, str]:
+    """从文件中读取Strava API配置"""
+    config_file = ".strava_config.json"
+    default_config = {
+        "client_id": "your_client_id_here",
+        "client_secret": "your_client_secret_here", 
+        "refresh_token": "your_refresh_token_here",
+        "access_token": ""
+    }
+    
+    try:
+        if os.path.exists(config_file):
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                # 确保所有必需的字段都存在
+                for key in default_config:
+                    if key not in config:
+                        config[key] = default_config[key]
+                return config
+    except Exception as e:
+        logger.warning(f"读取Strava配置文件失败: {e}")
+    
+    # 如果文件不存在或读取失败，创建默认配置文件
+    save_strava_config(default_config)
+    return default_config
+
+
+def save_strava_config(config: Dict[str, str]) -> None:
+    """将Strava API配置保存到文件"""
+    config_file = ".strava_config.json"
+    try:
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        debug_print("✅ Strava配置已保存")
+    except Exception as e:
+        logger.warning(f"保存Strava配置文件失败: {e}")
+
+
+def refresh_strava_token(config: Dict[str, str]) -> str:
+    """刷新Strava访问令牌"""
+    debug_print("🔄 刷新Strava访问令牌...")
+    
+    url = "https://www.strava.com/oauth/token"
+    data = {
+        "client_id": config["client_id"],
+        "client_secret": config["client_secret"],
+        "refresh_token": config["refresh_token"],
+        "grant_type": "refresh_token"
+    }
+    
+    try:
+        response = requests.post(url, data=data)
+        debug_print(f"📡 Token刷新响应状态码: {response.status_code}")
+        
+        if response.status_code == 200:
+            token_data = response.json()
+            new_access_token = token_data["access_token"]
+            
+            # 更新配置中的access_token
+            config["access_token"] = new_access_token
+            if "refresh_token" in token_data:
+                config["refresh_token"] = token_data["refresh_token"]
+                
+            # 保存更新后的配置
+            save_strava_config(config)
+            
+            debug_print("✅ Strava访问令牌刷新成功")
+            return new_access_token
+        else:
+            debug_print(f"❌ Token刷新失败: {response.text}")
+            raise ValueError("无法刷新Strava访问令牌，请检查配置")
+            
+    except Exception as e:
+        logger.error(f"刷新Strava令牌失败: {e}")
+        raise
+
+
+def get_strava_activities(access_token: str, limit: int = 10) -> List[Dict]:
+    """获取用户的Strava活动列表"""
+    debug_print(f"📋 获取最新的{limit}个Strava活动...")
+    
+    url = "https://www.strava.com/api/v3/athlete/activities"
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+    params = {
+        "per_page": limit,
+        "page": 1
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        debug_print(f"📡 活动列表响应状态码: {response.status_code}")
+        
+        if response.status_code == 200:
+            activities = response.json()
+            debug_print(f"✅ 成功获取{len(activities)}个活动")
+            return activities
+        else:
+            debug_print(f"❌ 获取活动列表失败: {response.text}")
+            raise ValueError("无法获取活动列表")
+            
+    except Exception as e:
+        logger.error(f"获取Strava活动失败: {e}")
+        raise
+
+
+def format_activity_choice(activity: Dict) -> str:
+    """格式化活动选择项"""
+    activity_id = activity.get("id", "Unknown")
+    name = activity.get("name", "未命名活动")
+    sport_type = activity.get("sport_type", "Unknown")
+    start_date = activity.get("start_date_local", "")
+    
+    # 格式化日期
+    if start_date:
+        try:
+            date_obj = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            formatted_date = date_obj.strftime("%Y-%m-%d %H:%M")
+        except:
+            formatted_date = start_date[:10]
+    else:
+        formatted_date = "未知日期"
+    
+    # 距离信息
+    distance = activity.get("distance", 0)
+    if distance > 0:
+        distance_km = distance / 1000
+        distance_str = f"{distance_km:.1f}km"
+    else:
+        distance_str = "无距离信息"
+    
+    return f"[{activity_id}] {name} ({sport_type}) - {formatted_date} - {distance_str}"
+
+
+def ask_activity_source() -> str:
+    """询问活动来源"""
+    return questionary.select(
+        "选择活动来源:",
+        choices=[
+            "从Strava API获取最新活动",
+            "手动输入活动ID"
+        ]
+    ).ask()
+
+
+def select_activity_from_api() -> str:
+    """从API获取活动并让用户选择"""
+    # 检查Strava配置
+    config = get_strava_config()
+    
+    # 检查是否需要用户更新配置
+    if (config["client_id"] == "your_client_id_here" or 
+        config["client_secret"] == "your_client_secret_here" or
+        config["refresh_token"] == "your_refresh_token_here"):
+        
+        print("\n⚠️ 检测到默认的Strava API配置")
+        print("请按照以下步骤获取Strava API凭据:")
+        print("1. 访问 https://www.strava.com/settings/api")
+        print("2. 创建应用程序获取 Client ID 和 Client Secret")
+        print("3. 使用OAuth流程获取 Refresh Token")
+        print("4. 更新 .strava_config.json 文件中的配置")
+        
+        use_manual = questionary.confirm(
+            "是否暂时使用手动输入活动ID的方式?",
+            default=True
+        ).ask()
+        
+        if use_manual:
+            return ask_activity_id()
+        else:
+            raise ValueError("请先配置Strava API凭据")
+    
+    try:
+        # 刷新访问令牌
+        access_token = refresh_strava_token(config)
+        
+        # 获取活动列表
+        activities = get_strava_activities(access_token)
+        
+        if not activities:
+            print("未找到任何活动")
+            return ask_activity_id()
+        
+        # 格式化选择项
+        choices = []
+        for activity in activities:
+            choices.append(format_activity_choice(activity))
+        
+        # 添加手动输入选项
+        choices.append("手动输入活动ID")
+        
+        # 让用户选择
+        selected = questionary.select(
+            f"选择要下载的活动 (显示最新{len(activities)}个):",
+            choices=choices
+        ).ask()
+        
+        if selected == "手动输入活动ID":
+            return ask_activity_id()
+        else:
+            # 提取活动ID
+            activity_id = re.search(r'\[(\d+)\]', selected).group(1)
+            debug_print(f"用户选择的活动ID: {activity_id}")
+            return activity_id
+            
+    except Exception as e:
+        logger.error(f"从API获取活动失败: {e}")
+        print(f"❌ 从API获取活动失败: {e}")
+        print("将使用手动输入方式...")
+        return ask_activity_id()
+
+
 def main():
     global DEBUG
     
@@ -54,7 +268,14 @@ def main():
     file_location = ask_file_location()
 
     if file_location == "Download":
-        activity_id = ask_activity_id()
+        # 选择活动来源
+        activity_source = ask_activity_source()
+        
+        if activity_source == "从Strava API获取最新活动":
+            activity_id = select_activity_from_api()
+        else:
+            activity_id = ask_activity_id()
+            
         logger.info("Selected activity ID: %s", activity_id)
         print("正在从Strava下载文件...")
         existing_file = download_tcx_file(activity_id)
