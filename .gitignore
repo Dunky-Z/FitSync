@@ -169,6 +169,7 @@ cython_debug/
 .igpsport_cookie
 
 .strava_config.json
+.app_config.json
 # Log files
 logs.log
 

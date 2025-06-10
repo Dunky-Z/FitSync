@@ -1,5 +1,17 @@
-import re
+import sys
 import os
+
+# 动态添加Python模块搜索路径
+user_site_packages = os.path.expanduser("~/.local/lib/python3.10/site-packages")
+system_dist_packages = "/usr/lib/python3/dist-packages"
+
+# 将路径添加到sys.path开头，优先级更高
+if user_site_packages not in sys.path:
+    sys.path.insert(0, user_site_packages)
+if system_dist_packages not in sys.path:
+    sys.path.insert(0, system_dist_packages)
+
+import re
 import time
 import logging
 import json
@@ -9,7 +21,7 @@ import oss2
 import argparse
 from datetime import datetime
 
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 
 import pandas as pd
 import questionary
@@ -39,14 +51,26 @@ def debug_print(message: str) -> None:
         print(message)
 
 
-def get_strava_config() -> Dict[str, str]:
-    """从文件中读取Strava API配置"""
-    config_file = ".strava_config.json"
+def get_app_config() -> Dict:
+    """获取应用统一配置"""
+    config_file = ".app_config.json"
     default_config = {
-        "client_id": "your_client_id_here",
-        "client_secret": "your_client_secret_here", 
-        "refresh_token": "your_refresh_token_here",
-        "access_token": ""
+        "strava": {
+            "client_id": "your_client_id_here",
+            "client_secret": "your_client_secret_here", 
+            "refresh_token": "your_refresh_token_here",
+            "access_token": "",
+            "cookie": ""
+        },
+        "igpsport": {
+            "login_token": "",
+            "username": "",
+            "password": ""
+        },
+        "general": {
+            "debug_mode": False,
+            "auto_save_credentials": True
+        }
     }
     
     try:
@@ -54,27 +78,134 @@ def get_strava_config() -> Dict[str, str]:
             with open(config_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
                 # 确保所有必需的字段都存在
-                for key in default_config:
-                    if key not in config:
-                        config[key] = default_config[key]
+                for section in default_config:
+                    if section not in config:
+                        config[section] = default_config[section]
+                    else:
+                        for key in default_config[section]:
+                            if key not in config[section]:
+                                config[section][key] = default_config[section][key]
+                
+                # 兼容旧配置文件
+                migrate_old_config(config)
                 return config
     except Exception as e:
-        logger.warning(f"读取Strava配置文件失败: {e}")
+        logger.warning(f"读取应用配置文件失败: {e}")
     
     # 如果文件不存在或读取失败，创建默认配置文件
-    save_strava_config(default_config)
+    save_app_config(default_config)
     return default_config
 
 
-def save_strava_config(config: Dict[str, str]) -> None:
-    """将Strava API配置保存到文件"""
-    config_file = ".strava_config.json"
+def migrate_old_config(config: Dict) -> None:
+    """迁移旧配置文件格式"""
+    try:
+        # 迁移旧的Strava配置
+        old_strava_config = ".strava_config.json"
+        if os.path.exists(old_strava_config):
+            with open(old_strava_config, 'r', encoding='utf-8') as f:
+                old_strava = json.load(f)
+                for key, value in old_strava.items():
+                    if key in config["strava"]:
+                        config["strava"][key] = value
+            debug_print("✅ 已迁移旧的Strava配置")
+        
+        # 迁移旧的Strava Cookie
+        old_strava_cookie = ".strava_cookie"
+        if os.path.exists(old_strava_cookie):
+            with open(old_strava_cookie, 'r', encoding='utf-8') as f:
+                cookie = f.read().strip()
+                if cookie:
+                    config["strava"]["cookie"] = cookie
+            debug_print("✅ 已迁移旧的Strava Cookie")
+        
+        # 迁移旧的IGPSport Cookie
+        old_igpsport_cookie = ".igpsport_cookie"
+        if os.path.exists(old_igpsport_cookie):
+            with open(old_igpsport_cookie, 'r', encoding='utf-8') as f:
+                token = f.read().strip()
+                if token:
+                    config["igpsport"]["login_token"] = token
+            debug_print("✅ 已迁移旧的IGPSport Token")
+        
+        # 保存迁移后的配置
+        save_app_config(config)
+        
+    except Exception as e:
+        logger.warning(f"配置迁移失败: {e}")
+
+
+def save_app_config(config: Dict) -> None:
+    """保存应用统一配置"""
+    config_file = ".app_config.json"
     try:
         with open(config_file, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
-        debug_print("✅ Strava配置已保存")
+        debug_print("✅ 应用配置已保存")
     except Exception as e:
-        logger.warning(f"保存Strava配置文件失败: {e}")
+        logger.warning(f"保存应用配置文件失败: {e}")
+
+
+def get_strava_config() -> Dict[str, str]:
+    """从统一配置中读取Strava API配置"""
+    config = get_app_config()
+    return config["strava"]
+
+
+def save_strava_config(strava_config: Dict[str, str]) -> None:
+    """将Strava API配置保存到统一配置"""
+    config = get_app_config()
+    config["strava"].update(strava_config)
+    save_app_config(config)
+
+
+def get_saved_cookie() -> str:
+    """从统一配置中读取保存的Strava Cookie"""
+    config = get_app_config()
+    return config["strava"]["cookie"]
+
+
+def save_cookie(cookie: str) -> None:
+    """将Strava Cookie保存到统一配置"""
+    config = get_app_config()
+    config["strava"]["cookie"] = cookie.strip()
+    save_app_config(config)
+    debug_print("✅ Strava Cookie已保存，下次运行时将自动使用")
+
+
+def get_saved_igpsport_cookie() -> str:
+    """从统一配置中读取保存的IGPSport Cookie"""
+    config = get_app_config()
+    return config["igpsport"]["login_token"]
+
+
+def save_igpsport_cookie(cookie: str) -> None:
+    """将IGPSport Cookie保存到统一配置"""
+    config = get_app_config()
+    config["igpsport"]["login_token"] = cookie.strip()
+    save_app_config(config)
+    debug_print("✅ IGPSport Cookie已保存，下次运行时将自动使用")
+
+
+def sanitize_filename(name: str) -> str:
+    """清理文件名，移除不合法字符"""
+    # 移除或替换不合法的文件名字符
+    invalid_chars = '<>:"/\\|?*'
+    for char in invalid_chars:
+        name = name.replace(char, '_')
+    
+    # 移除前后空格
+    name = name.strip()
+    
+    # 限制长度
+    if len(name) > 100:
+        name = name[:100]
+    
+    # 如果为空，使用默认名称
+    if not name:
+        name = "activity"
+    
+    return name
 
 
 def refresh_strava_token(config: Dict[str, str]) -> str:
@@ -185,8 +316,8 @@ def ask_activity_source() -> str:
     ).ask()
 
 
-def select_activity_from_api() -> str:
-    """从API获取活动并让用户选择"""
+def select_activity_from_api() -> Tuple[str, Optional[str]]:
+    """从API获取活动并让用户选择，返回(activity_id, activity_name)"""
     # 检查Strava配置
     config = get_strava_config()
     
@@ -200,7 +331,7 @@ def select_activity_from_api() -> str:
         print("1. 访问 https://www.strava.com/settings/api")
         print("2. 创建应用程序获取 Client ID 和 Client Secret")
         print("3. 使用OAuth流程获取 Refresh Token")
-        print("4. 更新 .strava_config.json 文件中的配置")
+        print("4. 更新 .app_config.json 文件中的strava配置")
         
         use_manual = questionary.confirm(
             "是否暂时使用手动输入活动ID的方式?",
@@ -208,7 +339,7 @@ def select_activity_from_api() -> str:
         ).ask()
         
         if use_manual:
-            return ask_activity_id()
+            return ask_activity_id(), None
         else:
             raise ValueError("请先配置Strava API凭据")
     
@@ -221,7 +352,7 @@ def select_activity_from_api() -> str:
         
         if not activities:
             print("未找到任何活动")
-            return ask_activity_id()
+            return ask_activity_id(), None
         
         # 格式化选择项
         choices = []
@@ -238,18 +369,27 @@ def select_activity_from_api() -> str:
         ).ask()
         
         if selected == "手动输入活动ID":
-            return ask_activity_id()
+            return ask_activity_id(), None
         else:
             # 提取活动ID
             activity_id = re.search(r'\[(\d+)\]', selected).group(1)
-            debug_print(f"用户选择的活动ID: {activity_id}")
-            return activity_id
+            
+            # 查找对应的活动信息
+            selected_activity = None
+            for activity in activities:
+                if str(activity.get("id")) == activity_id:
+                    selected_activity = activity
+                    break
+            
+            activity_name = selected_activity.get("name", "未命名活动") if selected_activity else None
+            debug_print(f"用户选择的活动ID: {activity_id}, 活动名: {activity_name}")
+            return activity_id, activity_name
             
     except Exception as e:
         logger.error(f"从API获取活动失败: {e}")
         print(f"❌ 从API获取活动失败: {e}")
         print("将使用手动输入方式...")
-        return ask_activity_id()
+        return ask_activity_id(), None
 
 
 def main():
@@ -272,13 +412,14 @@ def main():
         activity_source = ask_activity_source()
         
         if activity_source == "从Strava API获取最新活动":
-            activity_id = select_activity_from_api()
+            activity_id, activity_name = select_activity_from_api()
         else:
             activity_id = ask_activity_id()
+            activity_name = None
             
-        logger.info("Selected activity ID: %s", activity_id)
+        logger.info("Selected activity ID: %s, Name: %s", activity_id, activity_name)
         print("正在从Strava下载文件...")
-        existing_file = download_tcx_file(activity_id)
+        existing_file = download_tcx_file(activity_id, activity_name)
 
         # 如果返回了现有文件路径，直接使用
         if existing_file:
@@ -324,15 +465,16 @@ def ask_activity_id() -> str:
     return re.sub(r"\D", "", activity_id)
 
 
-def download_tcx_file(activity_id: str) -> str:
+def download_tcx_file(activity_id: str, activity_name: Optional[str] = None) -> str:
     # 统一使用export_original下载fit文件，不区分运动类型
     url = f"https://www.strava.com/activities/{activity_id}/export_original"
     
     debug_print(f"\n开始下载活动 {activity_id} 的原始文件...")
+    debug_print(f"活动名称: {activity_name}")
     debug_print(f"下载URL: {url}")
     
     # 检查是否已存在相同活动ID的文件
-    existing_file = check_existing_activity_file(activity_id)
+    existing_file = check_existing_activity_file(activity_id, activity_name)
     if existing_file:
         print(f"✅ 发现已存在的活动文件: {os.path.basename(existing_file)}")
         confirm_use = questionary.confirm(
@@ -347,11 +489,11 @@ def download_tcx_file(activity_id: str) -> str:
             print("⏬ 继续下载新文件...")
     
     # 直接使用Cookie认证下载
-    download_with_cookie(url, activity_id)
+    download_with_cookie(url, activity_id, activity_name)
     return ""
 
 
-def check_existing_activity_file(activity_id: str) -> str:
+def check_existing_activity_file(activity_id: str, activity_name: Optional[str] = None) -> str:
     """检查Downloads文件夹中是否已存在相同活动ID的文件"""
     download_folder = os.path.expanduser("~/Downloads")
     
@@ -362,7 +504,9 @@ def check_existing_activity_file(activity_id: str) -> str:
     
     # 查找匹配的活动文件，支持更多格式
     for file in files:
-        if f"activity_{activity_id}" in file and file.endswith(('.tcx', '.gpx', '.fit')):
+        # 检查新的命名格式（使用活动名）和旧的命名格式
+        if (f"_{activity_id}." in file and file.endswith(('.tcx', '.gpx', '.fit'))) or \
+           (f"activity_{activity_id}" in file and file.endswith(('.tcx', '.gpx', '.fit'))):
             full_path = os.path.join(download_folder, file)
             # 验证文件是否有效
             try:
@@ -385,57 +529,7 @@ def check_existing_activity_file(activity_id: str) -> str:
     return ""
 
 
-def get_saved_cookie() -> str:
-    """从文件中读取保存的Strava Cookie"""
-    cookie_file = ".strava_cookie"
-    try:
-        if os.path.exists(cookie_file):
-            with open(cookie_file, 'r', encoding='utf-8') as f:
-                cookie = f.read().strip()
-                if cookie:
-                    return cookie
-    except Exception as e:
-        logger.warning(f"读取Cookie文件失败: {e}")
-    return ""
-
-
-def save_cookie(cookie: str) -> None:
-    """将Strava Cookie保存到文件"""
-    cookie_file = ".strava_cookie"
-    try:
-        with open(cookie_file, 'w', encoding='utf-8') as f:
-            f.write(cookie.strip())
-        debug_print("✅ Strava Cookie已保存，下次运行时将自动使用")
-    except Exception as e:
-        logger.warning(f"保存Cookie文件失败: {e}")
-
-
-def get_saved_igpsport_cookie() -> str:
-    """从文件中读取保存的IGPSport Cookie"""
-    cookie_file = ".igpsport_cookie"
-    try:
-        if os.path.exists(cookie_file):
-            with open(cookie_file, 'r', encoding='utf-8') as f:
-                cookie = f.read().strip()
-                if cookie:
-                    return cookie
-    except Exception as e:
-        logger.warning(f"读取IGPSport Cookie文件失败: {e}")
-    return ""
-
-
-def save_igpsport_cookie(cookie: str) -> None:
-    """将IGPSport Cookie保存到文件"""
-    cookie_file = ".igpsport_cookie"
-    try:
-        with open(cookie_file, 'w', encoding='utf-8') as f:
-            f.write(cookie.strip())
-        debug_print("✅ IGPSport Cookie已保存，下次运行时将自动使用")
-    except Exception as e:
-        logger.warning(f"保存IGPSport Cookie文件失败: {e}")
-
-
-def download_with_cookie(url: str, activity_id: str) -> None:
+def download_with_cookie(url: str, activity_id: str, activity_name: Optional[str] = None) -> None:
     """使用Cookie进行认证下载"""
     
     # 首先尝试使用保存的Cookie
@@ -443,7 +537,7 @@ def download_with_cookie(url: str, activity_id: str) -> None:
     
     if saved_cookie:
         debug_print("使用已保存的Cookie进行下载...")
-        success = try_download_with_cookie(url, activity_id, saved_cookie)
+        success = try_download_with_cookie(url, activity_id, saved_cookie, activity_name)
         if success:
             return
         else:
@@ -468,7 +562,7 @@ def download_with_cookie(url: str, activity_id: str) -> None:
         raise ValueError("Cookie为空，无法继续")
     
     # 尝试使用新Cookie下载
-    success = try_download_with_cookie(url, activity_id, cookie_value)
+    success = try_download_with_cookie(url, activity_id, cookie_value, activity_name)
     
     if success:
         # 保存Cookie供下次使用
@@ -478,7 +572,7 @@ def download_with_cookie(url: str, activity_id: str) -> None:
         raise ValueError("下载失败")
 
 
-def try_download_with_cookie(url: str, activity_id: str, cookie: str) -> bool:
+def try_download_with_cookie(url: str, activity_id: str, cookie: str, activity_name: Optional[str] = None) -> bool:
     """尝试使用Cookie下载文件"""
     try:
         headers = {
@@ -497,10 +591,19 @@ def try_download_with_cookie(url: str, activity_id: str, cookie: str) -> bool:
         if response.status_code == 200:
             content_type = response.headers.get('content-type', '').lower()
             
+            # 生成文件名
+            if activity_name:
+                # 使用活动名生成文件名
+                clean_name = sanitize_filename(activity_name)
+                base_filename = f"{clean_name}_{activity_id}"
+            else:
+                # 如果没有活动名，使用默认格式
+                base_filename = f"activity_{activity_id}"
+            
             # 判断文件类型
             if 'application/octet-stream' in content_type or 'application/fit' in content_type:
                 # FIT文件（二进制）
-                filename = f"activity_{activity_id}.fit"
+                filename = f"{base_filename}.fit"
                 download_path = os.path.join(os.path.expanduser("~/Downloads"), filename)
                 
                 with open(download_path, 'wb') as f:
@@ -514,11 +617,11 @@ def try_download_with_cookie(url: str, activity_id: str, cookie: str) -> bool:
                 # XML格式文件（TCX/GPX）
                 content = response.text
                 if 'TrainingCenterDatabase' in content:
-                    filename = f"activity_{activity_id}.tcx"
+                    filename = f"{base_filename}.tcx"
                 elif 'gpx' in content.lower():
-                    filename = f"activity_{activity_id}.gpx"
+                    filename = f"{base_filename}.gpx"
                 else:
-                    filename = f"activity_{activity_id}.xml"
+                    filename = f"{base_filename}.xml"
                     
                 download_path = os.path.join(os.path.expanduser("~/Downloads"), filename)
                 
@@ -680,12 +783,39 @@ def convert_tcx_to_gpx(tcx_path: str, gpx_path: str) -> None:
 
 def get_igpsport_credentials() -> tuple:
     """获取IGPSport登录凭据"""
+    config = get_app_config()
+    
+    # 检查是否已保存凭据
+    saved_username = config["igpsport"]["username"]
+    saved_password = config["igpsport"]["password"]
+    
+    if saved_username and saved_password:
+        use_saved = questionary.confirm(
+            f"是否使用已保存的IGPSport账户: {saved_username}?",
+            default=True
+        ).ask()
+        
+        if use_saved:
+            return saved_username, saved_password
+    
     print("\n请输入IGPSport登录信息:")
     username = questionary.text("IGPSport用户名/邮箱:").ask()
     password = questionary.password("IGPSport密码:").ask()
     
     if not username or not password:
         raise ValueError("用户名和密码不能为空")
+    
+    # 询问是否保存凭据
+    save_credentials = questionary.confirm(
+        "是否保存登录凭据供下次使用?",
+        default=True
+    ).ask()
+    
+    if save_credentials:
+        config["igpsport"]["username"] = username
+        config["igpsport"]["password"] = password
+        save_app_config(config)
+        debug_print("✅ IGPSport登录凭据已保存")
     
     return username, password
 
