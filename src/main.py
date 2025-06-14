@@ -1,6 +1,9 @@
 import sys
 import os
 
+# 获取项目根目录路径
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # 动态添加Python模块搜索路径
 user_site_packages = os.path.expanduser("~/.local/lib/python3.10/site-packages")
 system_dist_packages = "/usr/lib/python3/dist-packages"
@@ -53,7 +56,7 @@ def debug_print(message: str) -> None:
 
 def get_app_config() -> Dict:
     """获取应用统一配置"""
-    config_file = ".app_config.json"
+    config_file = os.path.join(project_root, ".app_config.json")
     default_config = {
         "strava": {
             "client_id": "your_client_id_here",
@@ -101,7 +104,7 @@ def migrate_old_config(config: Dict) -> None:
     """迁移旧配置文件格式"""
     try:
         # 迁移旧的Strava配置
-        old_strava_config = ".strava_config.json"
+        old_strava_config = os.path.join(project_root, ".strava_config.json")
         if os.path.exists(old_strava_config):
             with open(old_strava_config, 'r', encoding='utf-8') as f:
                 old_strava = json.load(f)
@@ -111,7 +114,7 @@ def migrate_old_config(config: Dict) -> None:
             debug_print("✅ 已迁移旧的Strava配置")
         
         # 迁移旧的Strava Cookie
-        old_strava_cookie = ".strava_cookie"
+        old_strava_cookie = os.path.join(project_root, ".strava_cookie")
         if os.path.exists(old_strava_cookie):
             with open(old_strava_cookie, 'r', encoding='utf-8') as f:
                 cookie = f.read().strip()
@@ -120,7 +123,7 @@ def migrate_old_config(config: Dict) -> None:
             debug_print("✅ 已迁移旧的Strava Cookie")
         
         # 迁移旧的IGPSport Cookie
-        old_igpsport_cookie = ".igpsport_cookie"
+        old_igpsport_cookie = os.path.join(project_root, ".igpsport_cookie")
         if os.path.exists(old_igpsport_cookie):
             with open(old_igpsport_cookie, 'r', encoding='utf-8') as f:
                 token = f.read().strip()
@@ -137,7 +140,7 @@ def migrate_old_config(config: Dict) -> None:
 
 def save_app_config(config: Dict) -> None:
     """保存应用统一配置"""
-    config_file = ".app_config.json"
+    config_file = os.path.join(project_root, ".app_config.json")
     try:
         with open(config_file, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
