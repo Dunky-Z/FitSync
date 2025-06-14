@@ -70,6 +70,14 @@ def get_app_config() -> Dict:
             "username": "",
             "password": ""
         },
+        "garmin": {
+            "username": "",
+            "password": "",
+            "auth_domain": "GLOBAL",
+            "session_cookies": "",
+            "oauth_token": "",
+            "oauth_token_secret": ""
+        },
         "general": {
             "debug_mode": False,
             "auto_save_credentials": True
@@ -399,7 +407,7 @@ def main():
     global DEBUG
     
     # 解析命令行参数
-    parser = argparse.ArgumentParser(description='Strava到IGPSport文件上传工具')
+    parser = argparse.ArgumentParser(description='Strava到多平台文件上传工具')
     parser.add_argument('--debug', action='store_true', help='启用调试模式，显示详细信息')
     args = parser.parse_args()
     
@@ -439,9 +447,36 @@ def main():
         print("正在验证文件...")
         validate_file(file_path)
         
-        # 上传到IGPSport
-        print("正在上传到IGPSport...")
-        upload_to_igpsport(file_path)
+        # 询问要上传到哪些平台
+        upload_platforms = ask_upload_platforms()
+        
+        upload_success = []
+        upload_failed = []
+        
+        # 上传到选定的平台
+        for platform in upload_platforms:
+            try:
+                if platform == "igpsport":
+                    print("\n正在上传到IGPSport...")
+                    upload_to_igpsport(file_path)
+                    upload_success.append("IGPSport")
+                elif platform == "garmin":
+                    print("\n正在上传到Garmin Connect...")
+                    upload_to_garmin(file_path)
+                    upload_success.append("Garmin Connect")
+            except Exception as e:
+                logger.error(f"{platform}上传失败: {e}")
+                upload_failed.append(platform)
+                print(f"❌ {platform}上传失败: {e}")
+        
+        # 显示上传结果摘要
+        if upload_success or upload_failed:
+            print("\n📊 上传结果摘要:")
+            if upload_success:
+                print(f"✅ 成功上传到: {', '.join(upload_success)}")
+            if upload_failed:
+                print(f"❌ 上传失败: {', '.join(upload_failed)}")
+        
     else:
         logger.error("No file path provided")
         raise ValueError("No file path provided")
@@ -1121,6 +1156,194 @@ def indent_xml_file(file_path: str) -> None:
         logger.warning(
             "Failed to indent the XML file. The file will be saved without indentation."
         )
+
+
+def get_garmin_credentials() -> tuple:
+    """获取Garmin Connect登录凭据"""
+    config = get_app_config()
+    
+    # 检查是否已保存凭据
+    saved_username = config["garmin"]["username"]
+    saved_password = config["garmin"]["password"]
+    saved_domain = config["garmin"].get("auth_domain", "GLOBAL")
+    
+    if saved_username and saved_password:
+        use_saved = questionary.confirm(
+            f"是否使用已保存的Garmin Connect账户: {saved_username}?",
+            default=True
+        ).ask()
+        
+        if use_saved:
+            return saved_username, saved_password, saved_domain
+    
+    print("\n请输入Garmin Connect登录信息:")
+    username = questionary.text("Garmin Connect用户名/邮箱:").ask()
+    password = questionary.password("Garmin Connect密码:").ask()
+    
+    # 选择服务器区域
+    domain = questionary.select(
+        "选择Garmin Connect服务器:",
+        choices=[
+            {"name": "全球版 (garmin.com)", "value": "GLOBAL"},
+            {"name": "中国版 (garmin.cn)", "value": "CN"}
+        ]
+    ).ask()
+    
+    if not username or not password:
+        raise ValueError("用户名和密码不能为空")
+    
+    # 询问是否保存凭据
+    save_credentials = questionary.confirm(
+        "是否保存登录凭据供下次使用?",
+        default=True
+    ).ask()
+    
+    if save_credentials:
+        config["garmin"]["username"] = username
+        config["garmin"]["password"] = password
+        config["garmin"]["auth_domain"] = domain
+        save_app_config(config)
+        debug_print("✅ Garmin Connect登录凭据已保存")
+    
+    return username, password, domain
+
+
+def upload_to_garmin(file_path: str) -> None:
+    """上传活动到Garmin Connect"""
+    try:
+        # 检查是否安装了garth库
+        try:
+            from garmin_client import GarminClient, GARTH_AVAILABLE
+        except ImportError:
+            print("❌ 无法导入garmin_client模块")
+            raise
+        
+        if not GARTH_AVAILABLE:
+            print("❌ 需要安装garth库才能上传到Garmin Connect")
+            print("请运行: pip install garth")
+            return
+        
+        print("正在准备上传到Garmin Connect...")
+        
+        # 获取登录凭据
+        username, password, auth_domain = get_garmin_credentials()
+        
+        # 尝试上传，如果失败则提供重试选项
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                # 创建Garmin客户端
+                garmin_client = GarminClient(username, password, auth_domain)
+                
+                print("正在上传到Garmin Connect...")
+                
+                # 上传活动
+                result = garmin_client.upload_activity(file_path)
+                
+                if result == "SUCCESS":
+                    print("✅ 活动已成功上传到Garmin Connect！")
+                    return
+                elif result == "DUPLICATE_ACTIVITY":
+                    print("⚠️ 活动已存在于Garmin Connect中（重复活动）")
+                    return
+                else:
+                    print(f"❌ Garmin Connect上传失败: {result}")
+                    return
+                    
+            except Exception as e:
+                if "Update Phone Number" in str(e) or "Unexpected title" in str(e):
+                    print(f"\n🚨 检测到Garmin Connect反自动化验证（尝试 {attempt + 1}/{max_retries}）")
+                    
+                    if attempt < max_retries - 1:  # 不是最后一次尝试
+                        print("\n💡 可能的解决方案:")
+                        
+                        retry_options = questionary.select(
+                            "选择下一步操作:",
+                            choices=[
+                                {"name": "🌏 切换到中国版服务器 (garmin.cn)", "value": "switch_cn"},
+                                {"name": "🌍 切换到全球版服务器 (garmin.com)", "value": "switch_global"},
+                                {"name": "🔄 重新输入登录信息", "value": "re_login"},
+                                {"name": "❌ 放弃上传", "value": "abort"}
+                            ]
+                        ).ask()
+                        
+                        if retry_options == "switch_cn":
+                            auth_domain = "CN"
+                            print("🌏 已切换到中国版服务器，重试中...")
+                            continue
+                        elif retry_options == "switch_global":
+                            auth_domain = "GLOBAL"
+                            print("🌍 已切换到全球版服务器，重试中...")
+                            continue
+                        elif retry_options == "re_login":
+                            username, password, auth_domain = get_garmin_credentials()
+                            print("🔄 使用新的登录信息重试中...")
+                            continue
+                        else:
+                            print("❌ 用户选择放弃上传")
+                            return
+                    else:
+                        # 最后一次尝试失败
+                        print("\n📱 最终建议解决方案:")
+                        print("1. 在浏览器中访问相应的Garmin Connect网站:")
+                        if auth_domain == "CN":
+                            print("   https://connect.garmin.cn")
+                        else:
+                            print("   https://connect.garmin.com")
+                        print("2. 使用相同的用户名密码登录")
+                        print("3. 完成任何必要的验证步骤")
+                        print("4. 确保能正常访问主页")
+                        print("5. 保持浏览器窗口打开，重新运行此程序")
+                        
+                        raise e
+                else:
+                    raise e
+            
+    except ImportError as e:
+        if "garth" in str(e):
+            print("❌ 需要安装garth库才能上传到Garmin Connect")
+            print("请运行以下命令安装依赖:")
+            print("pip install garth")
+        else:
+            print(f"❌ 导入错误: {e}")
+    except Exception as e:
+        logger.error(f"Garmin Connect上传失败: {e}")
+        print(f"❌ Garmin Connect上传失败: {e}")
+
+
+def ask_upload_platforms() -> List[str]:
+    """询问用户要上传到哪些平台"""
+    print("\n📤 选择上传平台:")
+    print("💡 使用方向键移动，空格键选中/取消选中，回车键确认")
+    
+    platforms = questionary.checkbox(
+        "选择要上传到的平台 (可多选):",
+        choices=[
+            {"name": "IGPSport", "value": "igpsport", "checked": False},
+            {"name": "Garmin Connect", "value": "garmin", "checked": False}
+        ],
+        instruction="(使用空格键选择，回车键确认)"
+    ).ask()
+    
+    if not platforms:
+        print("⚠️ 未选择任何平台，将只验证文件")
+        confirm_no_upload = questionary.confirm(
+            "是否确定不上传到任何平台?",
+            default=False
+        ).ask()
+        
+        if not confirm_no_upload:
+            print("重新选择平台...")
+            return ask_upload_platforms()  # 递归重新选择
+    else:
+        platform_names = []
+        if "igpsport" in platforms:
+            platform_names.append("IGPSport")
+        if "garmin" in platforms:
+            platform_names.append("Garmin Connect")
+        print(f"✅ 已选择上传到: {', '.join(platform_names)}")
+    
+    return platforms or []
 
 
 if __name__ == "__main__":
