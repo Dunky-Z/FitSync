@@ -4,17 +4,22 @@
 用于测试 Strava-Garmin 双向同步的各个组件
 """
 
-import sys
 import os
+import sys
 import logging
 from datetime import datetime, timedelta
 
-# 添加模块路径
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 添加src目录到Python路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.join(os.path.dirname(current_dir), 'src')
+sys.path.insert(0, src_dir)
+
+import argparse
 
 from config_manager import ConfigManager
-from sync_manager import SyncManager, ActivityMetadata
-from activity_matcher import ActivityMatcher
+from database_manager import DatabaseManager, ActivityMetadata
+from sync_manager import SyncManager
+from activity_matcher import ActivityMatcher, MatchResult
 from strava_client import StravaClient
 from garmin_sync_client import GarminSyncClient
 from bidirectional_sync import BidirectionalSync
@@ -233,8 +238,6 @@ def run_all_tests():
 
 def main():
     """主函数"""
-    import argparse
-    
     parser = argparse.ArgumentParser(description='双向同步功能测试')
     parser.add_argument('--test', choices=[
         'all', 'metadata', 'sync_manager', 'matcher', 

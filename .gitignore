@@ -203,3 +203,7 @@ pyrightconfig.json
 .ionide
 
 # End of https://www.toptal.com/developers/gitignore/api/python,visualstudiocode
+
+activity_cache/
+**/sync_database.db
+**/sync_database.json.backup

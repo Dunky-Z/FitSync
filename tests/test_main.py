@@ -1,5 +1,19 @@
+#!/usr/bin/env python3
+"""
+主要功能测试脚本
+"""
+
 import os
-# import sys
+import sys
+
+# 添加src目录到Python路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.join(os.path.dirname(current_dir), 'src')
+sys.path.insert(0, src_dir)
+
+import argparse
+import logging
+from datetime import datetime
 import unittest
 
 from unittest.mock import patch
