@@ -35,49 +35,44 @@ class BidirectionalSync:
         if self.debug:
             print(f"[BidirectionalSync] {message}")
     
-    def run_sync(self, directions: Optional[List[str]] = None, batch_size: int = 10) -> Dict[str, Any]:
-        """运行双向同步"""
-        print("开始双向同步...")
+    def run_sync(self, directions: Optional[List[str]] = None, batch_size: int = 10, migration_mode: bool = True) -> Dict[str, Any]:
+        """运行双向同步
         
-        sync_results = {
-            "strava_to_garmin": {"success": 0, "failed": 0, "skipped": 0},
-            "garmin_to_strava": {"success": 0, "failed": 0, "skipped": 0},
-            "total_processed": 0,
-            "errors": []
-        }
+        Args:
+            directions: 同步方向列表，如 ['strava_to_garmin', 'garmin_to_strava']
+            batch_size: 每批处理的活动数量
+            migration_mode: 是否为历史迁移模式
+        """
+        if directions is None:
+            directions = ["strava_to_garmin", "garmin_to_strava"]
         
-        # 如果没有指定方向，使用所有启用的方向
-        if not directions:
-            directions = []
-            for source, target in self.sync_directions:
-                if self.sync_manager.is_sync_enabled(source, target):
-                    directions.append(f"{source}_to_{target}")
+        sync_results = {}
         
-        # 执行各个方向的同步
         for direction in directions:
-            if "_to_" in direction:
-                source, target = direction.split("_to_")
-                try:
-                    result = self._sync_direction(source, target, batch_size)
-                    sync_results[direction].update(result)
-                    sync_results["total_processed"] += result.get("processed", 0)
-                except Exception as e:
-                    error_msg = f"{direction}同步失败: {e}"
-                    logger.error(error_msg)
-                    sync_results["errors"].append(error_msg)
-        
-        # 清理旧缓存
-        self.sync_manager.cleanup_old_cache()
+            if "_to_" not in direction:
+                logger.warning(f"无效的同步方向: {direction}")
+                continue
+            
+            source_platform, target_platform = direction.split("_to_")
+            
+            try:
+                result = self._sync_direction(source_platform, target_platform, batch_size, migration_mode)
+                sync_results[direction] = result
+                
+            except Exception as e:
+                logger.error(f"{direction}同步失败: {e}")
+                sync_results[direction] = {"success": 0, "failed": 0, "skipped": 0, "processed": 0, "error": str(e)}
         
         # 显示同步结果
         self._display_sync_results(sync_results)
         
         return sync_results
     
-    def _sync_direction(self, source_platform: str, target_platform: str, batch_size: int) -> Dict[str, int]:
+    def _sync_direction(self, source_platform: str, target_platform: str, batch_size: int, migration_mode: bool = True) -> Dict[str, int]:
         """执行单个方向的同步"""
         direction = f"{source_platform}_to_{target_platform}"
-        print(f"\n开始{direction}同步...")
+        mode_desc = "历史迁移" if migration_mode else "增量同步"
+        print(f"\n开始{direction}{mode_desc}...")
         
         result = {"success": 0, "failed": 0, "skipped": 0, "processed": 0}
         
@@ -88,16 +83,29 @@ class BidirectionalSync:
                 return result
             
             # 获取同步时间窗口
-            start_time, end_time = self.sync_manager.get_sync_window(source_platform)
+            start_time, end_time = self.sync_manager.get_sync_window(source_platform, migration_mode=migration_mode)
+            
+            # 检查历史迁移是否已完成
+            if migration_mode and self.sync_manager.is_migration_complete(source_platform):
+                print(f"{source_platform}历史迁移已完成")
+                return result
             
             # 获取源平台活动
-            source_activities = self._get_platform_activities(source_platform, batch_size, start_time, end_time)
+            source_activities = self._get_platform_activities(
+                source_platform, batch_size, start_time, end_time, migration_mode
+            )
             
             if not source_activities:
-                print(f"在{source_platform}中未找到需要同步的活动")
+                if migration_mode:
+                    print(f"在{source_platform}中未找到更多需要迁移的活动，迁移可能已完成")
+                else:
+                    print(f"在{source_platform}中未找到需要同步的活动")
                 return result
             
             print(f"找到{len(source_activities)}个{source_platform}活动需要处理")
+            
+            # 记录最新处理的活动时间（用于更新迁移进度）
+            latest_activity_time = None
             
             # 处理每个活动
             for activity_data in source_activities:
@@ -115,6 +123,13 @@ class BidirectionalSync:
                     
                     result["processed"] += 1
                     
+                    # 记录活动时间
+                    activity_time_str = activity_data.get('start_date', '')
+                    if activity_time_str:
+                        activity_time = datetime.fromisoformat(activity_time_str.replace('Z', '+00:00'))
+                        if not latest_activity_time or activity_time > latest_activity_time:
+                            latest_activity_time = activity_time
+                    
                     # 检查API限制
                     if not self._check_api_limits(source_platform):
                         print(f"API限制已达到，停止{direction}同步")
@@ -125,8 +140,13 @@ class BidirectionalSync:
                     result["failed"] += 1
                     result["processed"] += 1
             
-            # 更新最后同步时间
-            self.sync_manager.update_last_sync_time(source_platform)
+            # 更新同步进度
+            if migration_mode and latest_activity_time:
+                self.sync_manager.update_migration_progress(source_platform, latest_activity_time)
+                print(f"更新{source_platform}迁移进度到: {latest_activity_time}")
+            else:
+                # 非迁移模式，更新最后同步时间
+                self.sync_manager.update_last_sync_time(source_platform)
             
         except Exception as e:
             logger.error(f"{direction}同步失败: {e}")
@@ -135,15 +155,24 @@ class BidirectionalSync:
         return result
     
     def _get_platform_activities(self, platform: str, limit: int, 
-                               start_time: datetime, end_time: datetime) -> List[Dict]:
+                               start_time: datetime, end_time: datetime, 
+                               migration_mode: bool = True) -> List[Dict]:
         """获取平台活动列表"""
         try:
             if platform == "strava":
                 # 记录API请求
                 self.sync_manager.record_api_request("strava")
-                return self.strava_client.get_activities_in_batches(
-                    total_limit=limit, after=start_time, before=end_time
-                )
+                
+                if migration_mode:
+                    # 历史迁移模式：使用专门的迁移方法
+                    return self.strava_client.get_activities_for_migration(
+                        batch_size=limit, after=start_time, before=end_time
+                    )
+                else:
+                    # 增量同步模式：使用原有方法
+                    return self.strava_client.get_activities_in_batches(
+                        total_limit=limit, after=start_time, before=end_time
+                    )
             elif platform == "garmin":
                 return self.garmin_client.get_activities(
                     limit=limit, after=start_time, before=end_time
@@ -275,20 +304,35 @@ class BidirectionalSync:
         print("双向同步结果摘要")
         print("="*50)
         
-        for direction, stats in results.items():
-            if direction.endswith("_to_garmin") or direction.endswith("_to_strava"):
+        total_success = 0
+        total_failed = 0
+        total_skipped = 0
+        total_processed = 0
+        
+        for direction, result in results.items():
+            if isinstance(result, dict) and "success" in result:
                 direction_name = direction.replace("_", " -> ").upper()
                 print(f"\n{direction_name}:")
-                print(f"  成功: {stats['success']}")
-                print(f"  失败: {stats['failed']}")
-                print(f"  跳过: {stats['skipped']}")
+                print(f"  成功: {result.get('success', 0)}")
+                print(f"  失败: {result.get('failed', 0)}")
+                print(f"  跳过: {result.get('skipped', 0)}")
+                
+                if "error" in result:
+                    print(f"  错误: {result['error']}")
+                
+                total_success += result.get('success', 0)
+                total_failed += result.get('failed', 0)
+                total_skipped += result.get('skipped', 0)
+                total_processed += result.get('processed', 0)
         
-        print(f"\n总处理活动数: {results['total_processed']}")
+        print(f"\n总处理活动数: {total_processed}")
+        print(f"总成功数: {total_success}")
+        print(f"总失败数: {total_failed}")
+        print(f"总跳过数: {total_skipped}")
         
-        if results['errors']:
-            print(f"\n错误信息:")
-            for error in results['errors']:
-                print(f"  - {error}")
+        if total_processed > 0:
+            success_rate = (total_success / total_processed) * 100
+            print(f"成功率: {success_rate:.1f}%")
         
         print("="*50)
     

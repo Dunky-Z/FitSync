@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import datetime, timezone
 
 # 获取项目根目录路径
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,7 +20,6 @@ import logging
 import requests
 import json
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime
 
 from config_manager import ConfigManager
 from file_utils import FileUtils
@@ -155,11 +155,22 @@ class StravaClient:
             for activity in activities:
                 activity_time = datetime.fromisoformat(activity['start_date'].replace('Z', '+00:00'))
                 
-                if after and activity_time < after:
-                    continue
-                if before and activity_time > before:
-                    continue
-                    
+                if after:
+                    # 确保after有时区信息
+                    after_tz = after
+                    if after_tz.tzinfo is None:
+                        after_tz = after_tz.replace(tzinfo=timezone.utc)
+                    if activity_time < after_tz:
+                        continue
+                        
+                if before:
+                    # 确保before有时区信息
+                    before_tz = before
+                    if before_tz.tzinfo is None:
+                        before_tz = before_tz.replace(tzinfo=timezone.utc)
+                    if activity_time > before_tz:
+                        continue
+                        
                 filtered_activities.append(activity)
             
             all_activities.extend(filtered_activities)
@@ -269,16 +280,13 @@ class StravaClient:
             self.debug_print(f"下载Strava活动文件: {activity_id}")
             
             # 使用现有的下载逻辑
-            from main_refactored import download_strava_activity
+            downloaded_file = self.download_file(activity_id)
             
-            # 临时创建一个配置对象
-            temp_config = {
-                'strava': self.config_manager.get_platform_config("strava")
-            }
-            
-            success = download_strava_activity(activity_id, save_path, temp_config)
-            
-            if success:
+            if downloaded_file and os.path.exists(downloaded_file):
+                # 如果下载成功，移动文件到指定路径
+                import shutil
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                shutil.move(downloaded_file, save_path)
                 self.debug_print(f"文件已下载到: {save_path}")
                 return True
             else:
@@ -419,4 +427,123 @@ class StravaClient:
                 
         except Exception as e:
             self.debug_print(f"文件保存失败: {e}")
-            return None 
+            return None
+    
+    def get_activities_for_migration(self, batch_size: int = 10, 
+                                    after: Optional[datetime] = None,
+                                    before: Optional[datetime] = None) -> List[Dict]:
+        """获取用于历史迁移的活动列表
+        
+        Args:
+            batch_size: 每批处理的活动数量
+            after: 开始时间（从这个时间之后开始获取）
+            before: 结束时间（获取到这个时间为止）
+        
+        Returns:
+            按时间顺序排列的活动列表（最老的在前）
+        """
+        print(f"获取历史迁移活动，批次大小: {batch_size}")
+        if after:
+            print(f"开始时间: {after}")
+        if before:
+            print(f"结束时间: {before}")
+        
+        all_activities = []
+        page = 1
+        per_page = 200  # Strava API最大每页200个
+        
+        # 获取足够多的活动以便筛选
+        max_pages = 50  # 最多获取50页，避免无限循环
+        
+        while page <= max_pages:
+            try:
+                headers = self._get_headers()
+                params = {
+                    'per_page': per_page,
+                    'page': page
+                }
+                
+                # 如果有after参数，添加到API请求中
+                if after:
+                    # Strava API使用Unix时间戳
+                    params['after'] = int(after.timestamp())
+                
+                if before:
+                    params['before'] = int(before.timestamp())
+                
+                print(f"获取第{page}页活动...")
+                response = requests.get(f"{self.base_url}/athlete/activities", 
+                                      headers=headers, params=params)
+                
+                if response.status_code == 200:
+                    activities = response.json()
+                    print(f"第{page}页获取到{len(activities)}个活动")
+                    
+                    if not activities:
+                        print("没有更多活动，停止获取")
+                        break
+                    
+                    # 时间过滤（双重保险）
+                    filtered_activities = []
+                    for activity in activities:
+                        activity_time = datetime.fromisoformat(activity['start_date'].replace('Z', '+00:00'))
+                        
+                        # 检查时间范围
+                        if after:
+                            # 确保after有时区信息
+                            after_tz = after
+                            if after_tz.tzinfo is None:
+                                after_tz = after_tz.replace(tzinfo=timezone.utc)
+                            if activity_time < after_tz:
+                                continue
+                                
+                        if before:
+                            # 确保before有时区信息
+                            before_tz = before
+                            if before_tz.tzinfo is None:
+                                before_tz = before_tz.replace(tzinfo=timezone.utc)
+                            if activity_time > before_tz:
+                                continue
+                                
+                        filtered_activities.append(activity)
+                    
+                    all_activities.extend(filtered_activities)
+                    print(f"过滤后添加{len(filtered_activities)}个活动，总计{len(all_activities)}个")
+                    
+                    # 如果已经获取足够的活动，停止
+                    if len(all_activities) >= batch_size:
+                        break
+                    
+                    # 如果这一页的活动数量少于请求数量，说明没有更多了
+                    if len(activities) < per_page:
+                        print("已获取所有可用活动")
+                        break
+                        
+                    page += 1
+                    
+                elif response.status_code == 401:
+                    # Token可能过期，尝试刷新
+                    if self._refresh_access_token():
+                        continue  # 重试当前页
+                    else:
+                        raise Exception("认证失败，无法刷新token")
+                else:
+                    raise Exception(f"获取活动失败: {response.status_code} - {response.text}")
+                    
+            except Exception as e:
+                logger.error(f"获取第{page}页活动失败: {e}")
+                break
+        
+        # 按时间排序（最老的在前）
+        all_activities.sort(key=lambda x: x['start_date'])
+        
+        # 只返回需要的数量
+        result = all_activities[:batch_size]
+        print(f"最终返回{len(result)}个活动用于迁移")
+        
+        if result:
+            first_activity_time = result[0]['start_date']
+            last_activity_time = result[-1]['start_date']
+            print(f"活动时间范围: {first_activity_time} 到 {last_activity_time}")
+        
+        return result 

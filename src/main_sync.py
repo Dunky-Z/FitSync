@@ -56,29 +56,51 @@ def show_main_menu() -> str:
     ).ask()
 
 
+def select_sync_mode() -> str:
+    """选择同步模式"""
+    return questionary.select(
+        "选择同步模式:",
+        choices=[
+            {"name": "历史迁移模式 - 从最老的活动开始批量迁移所有历史数据", "value": "migration"},
+            {"name": "增量同步模式 - 只同步最近的新活动", "value": "incremental"}
+        ],
+        instruction="(使用方向键选择，回车键确认)"
+    ).ask()
+
+
 def select_sync_directions() -> list:
     """选择同步方向"""
     return questionary.checkbox(
         "选择要执行的同步方向:",
         choices=[
-            {"name": "Strava -> Garmin", "value": "strava_to_garmin", "checked": True},
-            {"name": "Garmin -> Strava", "value": "garmin_to_strava", "checked": True}
+            {"name": "Strava -> Garmin", "value": "strava_to_garmin", "checked": False},
+            {"name": "Garmin -> Strava", "value": "garmin_to_strava", "checked": False}
         ],
         instruction="(使用空格键选择，回车键确认)"
     ).ask()
 
 
-def get_batch_size() -> int:
-    """获取批处理大小"""
-    batch_size = questionary.text(
-        "输入每批处理的活动数量 (默认: 10):",
-        default="10"
-    ).ask()
-    
-    try:
-        return max(1, min(50, int(batch_size)))  # 限制在1-50之间
-    except ValueError:
-        return 10
+def select_batch_size(migration_mode: bool = True) -> int:
+    """选择批次大小"""
+    if migration_mode:
+        return questionary.select(
+            "选择历史迁移的批次大小:",
+            choices=[
+                {"name": "调试模式 - 每次10个活动", "value": 10},
+                {"name": "正常模式 - 每次50个活动", "value": 50},
+                {"name": "快速模式 - 每次100个活动", "value": 100}
+            ],
+            instruction="(建议先用调试模式验证功能)"
+        ).ask()
+    else:
+        return questionary.select(
+            "选择增量同步的批次大小:",
+            choices=[
+                {"name": "小批次 - 每次10个活动", "value": 10},
+                {"name": "中批次 - 每次30个活动", "value": 30},
+                {"name": "大批次 - 每次50个活动", "value": 50}
+            ]
+        ).ask()
 
 
 def display_sync_status(sync_engine: BidirectionalSync) -> None:
@@ -244,6 +266,9 @@ def main():
                     if not check_prerequisites(sync_engine):
                         continue
                     
+                    # 选择同步模式
+                    sync_mode = select_sync_mode()
+                    
                     # 选择同步方向
                     directions = select_sync_directions()
                     
@@ -252,19 +277,27 @@ def main():
                         continue
                     
                     # 获取批处理大小
-                    batch_size = get_batch_size()
+                    batch_size = select_batch_size(sync_mode == "migration")
                     
                     print(f"\n将执行以下同步:")
-                    for direction in directions:
-                        direction_name = direction.replace("_", " -> ").upper()
-                        print(f"  - {direction_name}")
-                    print(f"批处理大小: {batch_size}")
+                    mode_desc = "历史迁移" if sync_mode == "migration" else "增量同步"
+                    print(f"- 同步模式: {mode_desc}")
+                    print(f"- 同步方向: {', '.join(directions)}")
+                    print(f"- 批次大小: {batch_size}")
                     
-                    # 确认执行
-                    if questionary.confirm("确认开始同步?").ask():
-                        sync_engine.run_sync(directions, batch_size)
-                    else:
-                        print("同步已取消")
+                    if sync_mode == "migration":
+                        print("\n⚠️  历史迁移模式说明:")
+                        print("- 将从最老的活动开始，逐步迁移所有历史数据")
+                        print("- 每次运行只处理指定数量的活动")
+                        print("- 可以多次运行，自动从上次停止的地方继续")
+                        print("- 建议先用调试模式（10个活动）验证功能")
+                    
+                    if not questionary.confirm("确认开始同步?").ask():
+                        continue
+                    
+                    # 执行同步
+                    migration_mode = (sync_mode == "migration")
+                    results = sync_engine.run_sync(directions, batch_size, migration_mode)
                 
                 elif action == "config":
                     sync_engine.configure_sync_rules()

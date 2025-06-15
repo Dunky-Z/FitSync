@@ -2,7 +2,7 @@ import os
 import json
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, asdict
 
@@ -108,8 +108,41 @@ class SyncManager:
         """更新同步状态"""
         self.db_manager.update_sync_status(fingerprint, source_platform, target_platform, status)
     
-    def get_sync_window(self, platform: str, max_days: int = 30) -> Tuple[datetime, datetime]:
-        """获取同步时间窗口"""
+    def get_sync_window(self, platform: str, max_days: int = 30, migration_mode: bool = True) -> Tuple[datetime, datetime]:
+        """获取同步时间窗口
+        
+        Args:
+            platform: 平台名称
+            max_days: 最大天数（仅在非迁移模式下使用）
+            migration_mode: 是否为历史迁移模式
+        """
+        if migration_mode:
+            return self._get_migration_window(platform)
+        else:
+            return self._get_incremental_window(platform, max_days)
+    
+    def _get_migration_window(self, platform: str) -> Tuple[datetime, datetime]:
+        """获取历史迁移模式的时间窗口"""
+        # 获取迁移进度
+        migration_progress = self.db_manager.get_sync_config(f'migration_progress_{platform}')
+        
+        if not migration_progress:
+            # 首次迁移：从很久以前开始（比如2008年Strava成立）
+            start_time = datetime(2008, 1, 1, tzinfo=timezone.utc)
+            self.debug_print(f"{platform}首次历史迁移，从{start_time}开始")
+        else:
+            # 继续迁移：从上次迁移进度开始
+            start_time = datetime.fromisoformat(migration_progress)
+            self.debug_print(f"{platform}继续历史迁移，从{start_time}开始")
+        
+        # 结束时间：现在
+        end_time = datetime.now(timezone.utc)
+        
+        self.debug_print(f"{platform}历史迁移时间窗口: {start_time} - {end_time}")
+        return start_time, end_time
+    
+    def _get_incremental_window(self, platform: str, max_days: int) -> Tuple[datetime, datetime]:
+        """获取增量同步模式的时间窗口（原有逻辑）"""
         last_sync_str = self.db_manager.get_last_sync_time(platform)
         now = datetime.now()
         
@@ -120,10 +153,59 @@ class SyncManager:
         else:
             # 增量同步：从上次同步时间开始，1小时重叠避免遗漏
             last_sync = datetime.fromisoformat(last_sync_str)
-            start_time = last_sync - timedelta(hours=1)
-            self.debug_print(f"{platform}增量同步，时间窗口: {start_time} - {now}")
+            
+            # 检查上次同步时间是否太久远（超过max_days天）
+            time_since_last_sync = now - last_sync
+            if time_since_last_sync.days > max_days:
+                # 如果上次同步时间太久远，重置为首次同步模式
+                start_time = now - timedelta(days=max_days)
+                self.debug_print(f"{platform}上次同步时间过久({time_since_last_sync.days}天前)，重置为首次同步模式")
+                self.debug_print(f"{platform}重置同步，时间窗口: {start_time} - {now}")
+            else:
+                # 正常增量同步，但确保至少覆盖最近7天
+                min_start_time = now - timedelta(days=7)
+                calculated_start_time = last_sync - timedelta(hours=1)
+                start_time = min(calculated_start_time, min_start_time)
+                self.debug_print(f"{platform}增量同步，时间窗口: {start_time} - {now}")
+        
+        # 确保返回的时间都是带时区信息的
+        if start_time.tzinfo is None:
+            # 如果是naive datetime，假设为UTC时间
+            start_time = start_time.replace(tzinfo=timezone.utc)
+        
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
         
         return start_time, now
+    
+    def update_migration_progress(self, platform: str, latest_activity_time: datetime) -> None:
+        """更新历史迁移进度"""
+        self.db_manager.set_sync_config(f'migration_progress_{platform}', latest_activity_time.isoformat())
+        self.debug_print(f"更新{platform}迁移进度到: {latest_activity_time}")
+    
+    def get_migration_progress(self, platform: str) -> Optional[datetime]:
+        """获取历史迁移进度"""
+        progress_str = self.db_manager.get_sync_config(f'migration_progress_{platform}')
+        if progress_str:
+            progress = datetime.fromisoformat(progress_str)
+            # 确保有时区信息
+            if progress.tzinfo is None:
+                progress = progress.replace(tzinfo=timezone.utc)
+            return progress
+        return None
+    
+    def is_migration_complete(self, platform: str) -> bool:
+        """检查历史迁移是否完成"""
+        progress = self.get_migration_progress(platform)
+        if not progress:
+            return False
+        
+        # 如果迁移进度已经接近当前时间（比如1天内），认为迁移完成
+        now = datetime.now(timezone.utc)
+        # 确保progress有时区信息
+        if progress.tzinfo is None:
+            progress = progress.replace(tzinfo=timezone.utc)
+        return (now - progress).days <= 1
     
     def update_last_sync_time(self, platform: str, sync_time: Optional[datetime] = None) -> None:
         """更新最后同步时间"""
