@@ -29,14 +29,14 @@ def test_garmin_import():
     try:
         from garmin_client import GarminClient, GARTH_AVAILABLE
         if GARTH_AVAILABLE:
-            print("✅ garth库已安装")
+            print("garth库已安装")
             return True
-        else:
-            print("❌ garth库未安装")
+        else: 
+            print("garth库未安装")
             print("请运行: pip install garth")
             return False
     except ImportError as e:
-        print(f"❌ 导入错误: {e}")
+        print(f"导入错误: {e}")
         return False
 
 def test_garmin_login():
@@ -46,14 +46,14 @@ def test_garmin_login():
         
         # 创建客户端实例（不会立即登录）
         client = GarminClient("test@example.com", "password", "GLOBAL")
-        print("✅ GarminClient创建成功")
+        print("GarminClient创建成功")
         return True
     except Exception as e:
-        print(f"❌ GarminClient创建失败: {e}")
+        print(f"GarminClient创建失败: {e}")
         return False
 
 def main():
-    print("🧪 测试Garmin Connect集成...")
+    print("测试Garmin Connect集成...")
     
     # 测试导入
     if not test_garmin_import():
@@ -63,8 +63,8 @@ def main():
     if not test_garmin_login():
         return False
     
-    print("✅ 所有测试通过！Garmin Connect功能已就绪")
-    print("\n📝 使用说明:")
+    print("所有测试通过！Garmin Connect功能已就绪")
+    print("\n使用说明:")
     print("1. 运行主程序: python main.py")
     print("2. 选择下载活动文件")
     print("3. 在上传平台选择中勾选 'Garmin Connect'")

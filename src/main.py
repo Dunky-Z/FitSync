@@ -119,7 +119,7 @@ def migrate_old_config(config: Dict) -> None:
                 for key, value in old_strava.items():
                     if key in config["strava"]:
                         config["strava"][key] = value
-            debug_print("✅ 已迁移旧的Strava配置")
+            debug_print("已迁移旧的Strava配置")
         
         # 迁移旧的Strava Cookie
         old_strava_cookie = os.path.join(project_root, ".strava_cookie")
@@ -128,7 +128,7 @@ def migrate_old_config(config: Dict) -> None:
                 cookie = f.read().strip()
                 if cookie:
                     config["strava"]["cookie"] = cookie
-            debug_print("✅ 已迁移旧的Strava Cookie")
+            debug_print("已迁移旧的Strava Cookie")
         
         # 迁移旧的IGPSport Cookie
         old_igpsport_cookie = os.path.join(project_root, ".igpsport_cookie")
@@ -137,7 +137,7 @@ def migrate_old_config(config: Dict) -> None:
                 token = f.read().strip()
                 if token:
                     config["igpsport"]["login_token"] = token
-            debug_print("✅ 已迁移旧的IGPSport Token")
+            debug_print("已迁移旧的IGPSport Token")
         
         # 保存迁移后的配置
         save_app_config(config)
@@ -152,7 +152,7 @@ def save_app_config(config: Dict) -> None:
     try:
         with open(config_file, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
-        debug_print("✅ 应用配置已保存")
+        debug_print("应用配置已保存")
     except Exception as e:
         logger.warning(f"保存应用配置文件失败: {e}")
 
@@ -181,7 +181,7 @@ def save_cookie(cookie: str) -> None:
     config = get_app_config()
     config["strava"]["cookie"] = cookie.strip()
     save_app_config(config)
-    debug_print("✅ Strava Cookie已保存，下次运行时将自动使用")
+    debug_print("Strava Cookie已保存，下次运行时将自动使用")
 
 
 def get_saved_igpsport_cookie() -> str:
@@ -195,7 +195,7 @@ def save_igpsport_cookie(cookie: str) -> None:
     config = get_app_config()
     config["igpsport"]["login_token"] = cookie.strip()
     save_app_config(config)
-    debug_print("✅ IGPSport Cookie已保存，下次运行时将自动使用")
+    debug_print("IGPSport Cookie已保存，下次运行时将自动使用")
 
 
 def sanitize_filename(name: str) -> str:
@@ -221,7 +221,7 @@ def sanitize_filename(name: str) -> str:
 
 def refresh_strava_token(config: Dict[str, str]) -> str:
     """刷新Strava访问令牌"""
-    debug_print("🔄 刷新Strava访问令牌...")
+    debug_print("刷新Strava访问令牌...")
     
     url = "https://www.strava.com/oauth/token"
     data = {
@@ -233,7 +233,7 @@ def refresh_strava_token(config: Dict[str, str]) -> str:
     
     try:
         response = requests.post(url, data=data)
-        debug_print(f"📡 Token刷新响应状态码: {response.status_code}")
+        debug_print(f"Token刷新响应状态码: {response.status_code}")
         
         if response.status_code == 200:
             token_data = response.json()
@@ -247,10 +247,10 @@ def refresh_strava_token(config: Dict[str, str]) -> str:
             # 保存更新后的配置
             save_strava_config(config)
             
-            debug_print("✅ Strava访问令牌刷新成功")
+            debug_print("Strava访问令牌刷新成功")
             return new_access_token
         else:
-            debug_print(f"❌ Token刷新失败: {response.text}")
+            debug_print(f"Token刷新失败: {response.text}")
             raise ValueError("无法刷新Strava访问令牌，请检查配置")
             
     except Exception as e:
@@ -260,7 +260,7 @@ def refresh_strava_token(config: Dict[str, str]) -> str:
 
 def get_strava_activities(access_token: str, limit: int = 10) -> List[Dict]:
     """获取用户的Strava活动列表"""
-    debug_print(f"📋 获取最新的{limit}个Strava活动...")
+    debug_print(f"获取最新的{limit}个Strava活动...")
     
     url = "https://www.strava.com/api/v3/athlete/activities"
     headers = {
@@ -273,14 +273,14 @@ def get_strava_activities(access_token: str, limit: int = 10) -> List[Dict]:
     
     try:
         response = requests.get(url, headers=headers, params=params)
-        debug_print(f"📡 活动列表响应状态码: {response.status_code}")
+        debug_print(f"活动列表响应状态码: {response.status_code}")
         
         if response.status_code == 200:
             activities = response.json()
-            debug_print(f"✅ 成功获取{len(activities)}个活动")
+            debug_print(f"成功获取{len(activities)}个活动")
             return activities
         else:
-            debug_print(f"❌ 获取活动列表失败: {response.text}")
+            debug_print(f"获取活动列表失败: {response.text}")
             raise ValueError("无法获取活动列表")
             
     except Exception as e:
@@ -336,8 +336,8 @@ def select_activity_from_api() -> Tuple[str, Optional[str]]:
     if (config["client_id"] == "your_client_id_here" or 
         config["client_secret"] == "your_client_secret_here" or
         config["refresh_token"] == "your_refresh_token_here"):
-        
-        print("\n⚠️ 检测到默认的Strava API配置")
+
+        print("检测到默认的Strava API配置")
         print("请按照以下步骤获取Strava API凭据:")
         print("1. 访问 https://www.strava.com/settings/api")
         print("2. 创建应用程序获取 Client ID 和 Client Secret")
@@ -398,7 +398,7 @@ def select_activity_from_api() -> Tuple[str, Optional[str]]:
             
     except Exception as e:
         logger.error(f"从API获取活动失败: {e}")
-        print(f"❌ 从API获取活动失败: {e}")
+        print(f"从API获取活动失败: {e}")
         print("将使用手动输入方式...")
         return ask_activity_id(), None
 
@@ -414,7 +414,7 @@ def main():
     DEBUG = args.debug
     
     if DEBUG:
-        print("🐛 调试模式已启用")
+        print("调试模式已启用")
     
     file_location = ask_file_location()
 
@@ -467,21 +467,21 @@ def main():
             except Exception as e:
                 logger.error(f"{platform}上传失败: {e}")
                 upload_failed.append(platform)
-                print(f"❌ {platform}上传失败: {e}")
+                print(f"{platform}上传失败: {e}")
         
         # 显示上传结果摘要
         if upload_success or upload_failed:
-            print("\n📊 上传结果摘要:")
+            print("\n上传结果摘要:")
             if upload_success:
-                print(f"✅ 成功上传到: {', '.join(upload_success)}")
+                print(f"成功上传到: {', '.join(upload_success)}")
             if upload_failed:
-                print(f"❌ 上传失败: {', '.join(upload_failed)}")
+                print(f"上传失败: {', '.join(upload_failed)}")
         
     else:
         logger.error("No file path provided")
         raise ValueError("No file path provided")
 
-    print("✅ 处理完成！")
+    print("处理完成！")
 
 
 def ask_file_location() -> str:
@@ -514,17 +514,17 @@ def download_tcx_file(activity_id: str, activity_name: Optional[str] = None) -> 
     # 检查是否已存在相同活动ID的文件
     existing_file = check_existing_activity_file(activity_id, activity_name)
     if existing_file:
-        print(f"✅ 发现已存在的活动文件: {os.path.basename(existing_file)}")
+        print(f"发现已存在的活动文件: {os.path.basename(existing_file)}")
         confirm_use = questionary.confirm(
             f"是否使用已存在的文件: {os.path.basename(existing_file)}?",
             default=True
         ).ask()
         
         if confirm_use:
-            print("🔄 跳过下载，使用已存在的文件")
+            print("跳过下载，使用已存在的文件")
             return existing_file
         else:
-            print("⏬ 继续下载新文件...")
+            print("继续下载新文件...")
     
     # 直接使用Cookie认证下载
     download_with_cookie(url, activity_id, activity_name)
@@ -606,7 +606,7 @@ def download_with_cookie(url: str, activity_id: str, activity_name: Optional[str
         # 保存Cookie供下次使用
         save_cookie(cookie_value)
     else:
-        print("❌ Cookie无效或活动不可访问")
+        print("Cookie无效或活动不可访问")
         raise ValueError("下载失败")
 
 
@@ -619,12 +619,12 @@ def try_download_with_cookie(url: str, activity_id: str, cookie: str, activity_n
             'Referer': f'https://www.strava.com/activities/{activity_id}'
         }
         
-        debug_print(f"🌐 发送下载请求...")
+        debug_print(f"发送下载请求...")
         response = requests.get(url, headers=headers, timeout=30)
         
-        debug_print(f"📡 响应状态码: {response.status_code}")
-        debug_print(f"📄 Content-Type: {response.headers.get('content-type', 'Unknown')}")
-        debug_print(f"📊 Content-Length: {response.headers.get('content-length', 'Unknown')}")
+        debug_print(f"响应状态码: {response.status_code}")
+        debug_print(f"Content-Type: {response.headers.get('content-type', 'Unknown')}")
+        debug_print(f"Content-Length: {response.headers.get('content-length', 'Unknown')}")
         
         if response.status_code == 200:
             content_type = response.headers.get('content-type', '').lower()
@@ -647,8 +647,8 @@ def try_download_with_cookie(url: str, activity_id: str, cookie: str, activity_n
                 with open(download_path, 'wb') as f:
                     f.write(response.content)
                 
-                print(f"✅ FIT文件已成功下载: {filename}")
-                debug_print(f"📁 文件大小: {len(response.content)} bytes")
+                print(f"FIT文件已成功下载: {filename}")
+                debug_print(f"文件大小: {len(response.content)} bytes")
                 return True
                 
             elif 'xml' in content_type or '<?xml' in response.text:
@@ -666,19 +666,19 @@ def try_download_with_cookie(url: str, activity_id: str, cookie: str, activity_n
                 with open(download_path, 'w', encoding='utf-8') as f:
                     f.write(content)
                 
-                print(f"✅ XML文件已成功下载: {filename}")
-                debug_print(f"📁 文件大小: {len(content)} characters")
+                print(f"XML文件已成功下载: {filename}")
+                debug_print(f"文件大小: {len(content)} characters")
                 return True
             else:
-                debug_print(f"❌ 未知的文件格式，Content-Type: {content_type}")
-                debug_print(f"📄 响应内容开头: {response.text[:200] if response.text else response.content[:200]}")
+                debug_print(f"未知的文件格式，Content-Type: {content_type}")
+                debug_print(f"响应内容开头: {response.text[:200] if response.text else response.content[:200]}")
                 return False
         else:
-            debug_print(f"❌ 下载失败 (状态码: {response.status_code})")
+            debug_print(f"下载失败 (状态码: {response.status_code})")
             return False
             
     except Exception as e:
-        debug_print(f"❌ 下载出错: {e}")
+        debug_print(f"下载出错: {e}")
         return False
 
 
@@ -739,7 +739,7 @@ def validate_file(file_path: str) -> None:
         # FIT文件验证
         try:
             file_size = os.path.getsize(file_path)
-            debug_print(f"📁 FIT文件大小: {file_size} bytes")
+            debug_print(f"FIT文件大小: {file_size} bytes")
             
             if file_size == 0:
                 logger.error("The FIT file is empty.")
@@ -749,7 +749,7 @@ def validate_file(file_path: str) -> None:
             with open(file_path, 'rb') as f:
                 header = f.read(4)
                 if len(header) >= 4:
-                    debug_print(f"📄 FIT文件头: {header}")
+                    debug_print(f"FIT文件头: {header}")
                 else:
                     logger.error("Invalid FIT file header.")
                     raise ValueError("Invalid FIT file header.")
@@ -764,7 +764,7 @@ def validate_file(file_path: str) -> None:
         with open(file_path, "r", encoding='utf-8') as file:
             content = file.read()
         
-        debug_print(f"📁 XML文件大小: {len(content)} characters")
+        debug_print(f"XML文件大小: {len(content)} characters")
         
         if not content:
             logger.error("The file is empty.")
@@ -853,7 +853,7 @@ def get_igpsport_credentials() -> tuple:
         config["igpsport"]["username"] = username
         config["igpsport"]["password"] = password
         save_app_config(config)
-        debug_print("✅ IGPSport登录凭据已保存")
+        debug_print("IGPSport登录凭据已保存")
     
     return username, password
 
@@ -891,7 +891,7 @@ def login_igpsport(username: str, password: str) -> str:
             # 提取登录token
             for cookie in session.cookies:
                 if cookie.name == 'loginToken':
-                    print("✅ IGPSport登录成功")
+                    print("IGPSport登录成功")
                     # 保存cookie供下次使用
                     save_igpsport_cookie(cookie.value)
                     return cookie.value
@@ -901,11 +901,11 @@ def login_igpsport(username: str, password: str) -> str:
                 if response.text:
                     result = response.json()
                     if 'token' in result:
-                        print("✅ IGPSport登录成功")
+                        print("IGPSport登录成功")
                         save_igpsport_cookie(result['token'])
                         return result['token']
                     elif 'data' in result and 'token' in result['data']:
-                        print("✅ IGPSport登录成功")
+                        print("IGPSport登录成功")
                         save_igpsport_cookie(result['data']['token'])
                         return result['data']['token']
             except Exception as e:
@@ -931,7 +931,7 @@ def login_igpsport(username: str, password: str) -> str:
         
         token = questionary.text("请输入loginToken值:").ask()
         if token:
-            print("✅ 使用手动输入的Token")
+            print("使用手动输入的Token")
             save_igpsport_cookie(token.strip())
             return token.strip()
     
@@ -963,34 +963,34 @@ def get_oss_token(login_token: str) -> dict:
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
-    debug_print(f"🌐 请求URL: {url}")
-    debug_print(f"🔑 Authorization: Bearer {login_token[:20]}...")
+    debug_print(f"请求URL: {url}")
+    debug_print(f"Authorization: Bearer {login_token[:20]}...")
     
     response = requests.get(url, headers=headers)
     
-    debug_print(f"📡 响应状态码: {response.status_code}")
-    debug_print(f"📄 响应头: {dict(response.headers)}")
+    debug_print(f"响应状态码: {response.status_code}")
+    debug_print(f"响应头: {dict(response.headers)}")
     
     if response.status_code == 200:
         try:
             data = response.json()
-            debug_print(f"📊 完整响应数据: {data}")
+            debug_print(f"完整响应数据: {data}")
             
             if 'data' in data:
                 oss_data = data['data']
-                debug_print("✅ OSS凭证获取成功")
-                debug_print(f"🔑 AccessKeyId: {oss_data.get('accessKeyId', 'Not found')}")
-                debug_print(f"🔑 SecurityToken前50字符: {oss_data.get('securityToken', 'Not found')[:50]}...")
+                debug_print("OSS凭证获取成功")
+                debug_print(f"AccessKeyId: {oss_data.get('accessKeyId', 'Not found')}")
+                debug_print(f"SecurityToken前50字符: {oss_data.get('securityToken', 'Not found')[:50]}...")
                 return oss_data
             else:
-                debug_print("❌ 响应中没有找到data字段")
-                debug_print(f"📄 完整响应: {data}")
+                debug_print("响应中没有找到data字段")
+                debug_print(f"完整响应: {data}")
         except Exception as e:
-            debug_print(f"❌ JSON解析失败: {e}")
-            debug_print(f"📄 响应文本: {response.text}")
+            debug_print(f"JSON解析失败: {e}")
+            debug_print(f"响应文本: {response.text}")
     else:
-        debug_print("❌ 获取OSS凭证失败")
-        debug_print(f"📄 响应文本: {response.text}")
+        debug_print("获取OSS凭证失败")
+        debug_print(f"响应文本: {response.text}")
     
     raise ValueError("获取OSS凭证失败")
 
@@ -1002,9 +1002,9 @@ def upload_to_oss(file_path: str, oss_credentials: dict) -> str:
     # 生成唯一的OSS文件名
     oss_name = f"1456042-{str(uuid.uuid4())}"
     
-    debug_print(f"📁 本地文件: {file_path}")
-    debug_print(f"☁️ OSS文件名: {oss_name}")
-    debug_print(f"📊 文件大小: {os.path.getsize(file_path)} bytes")
+    debug_print(f"本地文件: {file_path}")
+    debug_print(f"OSS文件名: {oss_name}")
+    debug_print(f"文件大小: {os.path.getsize(file_path)} bytes")
     
     try:
         # 使用OSS凭证创建认证对象
@@ -1021,41 +1021,41 @@ def upload_to_oss(file_path: str, oss_credentials: dict) -> str:
             oss_credentials['bucketName']
         )
         
-        debug_print(f"🌐 OSS Endpoint: {oss_credentials['endpoint']}")
-        debug_print(f"🪣 OSS Bucket: {oss_credentials['bucketName']}")
-        debug_print(f"🔑 使用AccessKey: {oss_credentials['accessKeyId']}")
+        debug_print(f"OSS Endpoint: {oss_credentials['endpoint']}")
+        debug_print(f"OSS Bucket: {oss_credentials['bucketName']}")
+        debug_print(f"使用AccessKey: {oss_credentials['accessKeyId']}")
         
         # 上传文件
-        debug_print("📤 开始真正的OSS上传...")
+        debug_print("开始真正的OSS上传...")
         result = bucket.put_object_from_file(oss_name, file_path)
         
-        debug_print(f"📡 OSS上传结果状态: {result.status}")
-        debug_print(f"🆔 请求ID: {result.request_id}")
-        debug_print(f"🔗 ETag: {result.etag}")
+        debug_print(f"OSS上传结果状态: {result.status}")
+        debug_print(f"请求ID: {result.request_id}")
+        debug_print(f"ETag: {result.etag}")
         
         if result.status == 200:
-            print("✅ 文件上传成功")
+            print("文件上传成功")
             
             # 验证文件是否真的上传成功
             if bucket.object_exists(oss_name):
-                debug_print("✅ 文件在OSS中确认存在")
+                debug_print("文件在OSS中确认存在")
                 
                 # 获取文件信息
                 meta = bucket.head_object(oss_name)
-                debug_print(f"📊 OSS中文件大小: {meta.content_length} bytes")
-                debug_print(f"📅 上传时间: {meta.last_modified}")
+                debug_print(f"OSS中文件大小: {meta.content_length} bytes")
+                debug_print(f"上传时间: {meta.last_modified}")
             else:
-                debug_print("❌ 警告：文件在OSS中不存在")
+                debug_print("警告：文件在OSS中不存在")
         else:
-            debug_print(f"❌ OSS上传失败，状态码: {result.status}")
+            debug_print(f"OSS上传失败，状态码: {result.status}")
             raise Exception(f"OSS上传失败，状态码: {result.status}")
         
         return oss_name
         
     except Exception as e:
         logger.error(f"OSS上传失败: {e}")
-        debug_print(f"❌ OSS上传异常: {e}")
-        debug_print("📋 错误详情:")
+        debug_print(f"OSS上传异常: {e}")
+        debug_print("错误详情:")
         debug_print(f"  - AccessKeyId: {oss_credentials.get('accessKeyId', 'Missing')}")
         debug_print(f"  - Endpoint: {oss_credentials.get('endpoint', 'Missing')}")
         debug_print(f"  - BucketName: {oss_credentials.get('bucketName', 'Missing')}")
@@ -1080,26 +1080,26 @@ def notify_igpsport(login_token: str, file_name: str, oss_name: str) -> None:
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
     }
     
-    print(f"🌐 通知URL: {url}")
-    print(f"📄 发送数据: {data}")
-    print(f"🔑 使用Token: {login_token[:20]}...")
+    print(f"通知URL: {url}")
+    print(f"发送数据: {data}")
+    print(f"使用Token: {login_token[:20]}...")
     
     response = requests.post(url, json=data, headers=headers)
     
-    print(f"📡 通知响应状态码: {response.status_code}")
-    print(f"📄 响应头: {dict(response.headers)}")
-    print(f"📊 响应内容: {response.text}")
+    print(f"通知响应状态码: {response.status_code}")
+    print(f"响应头: {dict(response.headers)}")
+    print(f"响应内容: {response.text}")
     
     if response.status_code == 200:
         try:
             result = response.json()
-            print(f"📊 解析后的响应: {result}")
-            print("✅ IGPSport上传通知成功")
+            print(f"解析后的响应: {result}")
+            print("IGPSport上传通知成功")
         except:
-            print("✅ IGPSport上传通知成功（无JSON响应）")
+            print("IGPSport上传通知成功（无JSON响应）")
     else:
-        print(f"⚠️ IGPSport通知失败 (状态码: {response.status_code})")
-        print(f"❌ 可能的错误原因：")
+        print(f"IGPSport通知失败 (状态码: {response.status_code})")
+        print(f"可能的错误原因：")
         print(f"   - Token已过期")
         print(f"   - OSS文件名无效")
         print(f"   - 服务器内部错误")
@@ -1115,7 +1115,7 @@ def upload_to_igpsport(file_path: str) -> None:
         if saved_cookie:
             print("使用已保存的IGPSport Cookie进行认证...")
             if test_igpsport_cookie(saved_cookie):
-                print("✅ IGPSport Cookie有效，跳过登录")
+                print("IGPSport Cookie有效，跳过登录")
                 login_token = saved_cookie
             else:
                 print("保存的IGPSport Cookie已过期，需要重新登录...")
@@ -1135,11 +1135,11 @@ def upload_to_igpsport(file_path: str) -> None:
         # 5. 通知IGPSport
         notify_igpsport(login_token, file_name, oss_name)
         
-        print(f"\n🎉 文件 {file_name} 已成功上传到IGPSport！")
+        print(f"\n文件 {file_name} 已成功上传到IGPSport！")
         
     except Exception as e:
         logger.error(f"IGPSport上传失败: {e}")
-        print(f"❌ 上传失败: {e}")
+        print(f"上传失败: {e}")
         raise
 
 
@@ -1203,7 +1203,7 @@ def get_garmin_credentials() -> tuple:
         config["garmin"]["password"] = password
         config["garmin"]["auth_domain"] = domain
         save_app_config(config)
-        debug_print("✅ Garmin Connect登录凭据已保存")
+        debug_print("Garmin Connect登录凭据已保存")
     
     return username, password, domain
 
@@ -1215,11 +1215,11 @@ def upload_to_garmin(file_path: str) -> None:
         try:
             from garmin_client import GarminClient, GARTH_AVAILABLE
         except ImportError:
-            print("❌ 无法导入garmin_client模块")
+            print("无法导入garmin_client模块")
             raise
         
         if not GARTH_AVAILABLE:
-            print("❌ 需要安装garth库才能上传到Garmin Connect")
+            print("需要安装garth库才能上传到Garmin Connect")
             print("请运行: pip install garth")
             return
         
@@ -1241,50 +1241,50 @@ def upload_to_garmin(file_path: str) -> None:
                 result = garmin_client.upload_activity(file_path)
                 
                 if result == "SUCCESS":
-                    print("✅ 活动已成功上传到Garmin Connect！")
+                    print("活动已成功上传到Garmin Connect！")
                     return
                 elif result == "DUPLICATE_ACTIVITY":
-                    print("⚠️ 活动已存在于Garmin Connect中（重复活动）")
+                    print("活动已存在于Garmin Connect中（重复活动）")
                     return
                 else:
-                    print(f"❌ Garmin Connect上传失败: {result}")
+                    print(f"Garmin Connect上传失败: {result}")
                     return
                     
             except Exception as e:
                 if "Update Phone Number" in str(e) or "Unexpected title" in str(e):
-                    print(f"\n🚨 检测到Garmin Connect反自动化验证（尝试 {attempt + 1}/{max_retries}）")
+                    print(f"\n检测到Garmin Connect反自动化验证（尝试 {attempt + 1}/{max_retries}）")
                     
                     if attempt < max_retries - 1:  # 不是最后一次尝试
-                        print("\n💡 可能的解决方案:")
+                        print("\n可能的解决方案:")
                         
                         retry_options = questionary.select(
                             "选择下一步操作:",
                             choices=[
-                                {"name": "🌏 切换到中国版服务器 (garmin.cn)", "value": "switch_cn"},
-                                {"name": "🌍 切换到全球版服务器 (garmin.com)", "value": "switch_global"},
-                                {"name": "🔄 重新输入登录信息", "value": "re_login"},
-                                {"name": "❌ 放弃上传", "value": "abort"}
+                                {"name": "切换到中国版服务器 (garmin.cn)", "value": "switch_cn"},
+                                {"name": "切换到全球版服务器 (garmin.com)", "value": "switch_global"},
+                                {"name": "重新输入登录信息", "value": "re_login"},
+                                {"name": "放弃上传", "value": "abort"}
                             ]
                         ).ask()
                         
                         if retry_options == "switch_cn":
                             auth_domain = "CN"
-                            print("🌏 已切换到中国版服务器，重试中...")
+                            print("已切换到中国版服务器，重试中...")
                             continue
                         elif retry_options == "switch_global":
                             auth_domain = "GLOBAL"
-                            print("🌍 已切换到全球版服务器，重试中...")
+                            print("已切换到全球版服务器，重试中...")
                             continue
                         elif retry_options == "re_login":
                             username, password, auth_domain = get_garmin_credentials()
-                            print("🔄 使用新的登录信息重试中...")
+                            print("使用新的登录信息重试中...")
                             continue
                         else:
-                            print("❌ 用户选择放弃上传")
+                            print("用户选择放弃上传")
                             return
                     else:
                         # 最后一次尝试失败
-                        print("\n📱 最终建议解决方案:")
+                        print("\n最终建议解决方案:")
                         print("1. 在浏览器中访问相应的Garmin Connect网站:")
                         if auth_domain == "CN":
                             print("   https://connect.garmin.cn")
@@ -1301,20 +1301,20 @@ def upload_to_garmin(file_path: str) -> None:
             
     except ImportError as e:
         if "garth" in str(e):
-            print("❌ 需要安装garth库才能上传到Garmin Connect")
+            print("需要安装garth库才能上传到Garmin Connect")
             print("请运行以下命令安装依赖:")
             print("pip install garth")
         else:
-            print(f"❌ 导入错误: {e}")
+            print(f"导入错误: {e}")
     except Exception as e:
         logger.error(f"Garmin Connect上传失败: {e}")
-        print(f"❌ Garmin Connect上传失败: {e}")
+        print(f"Garmin Connect上传失败: {e}")
 
 
 def ask_upload_platforms() -> List[str]:
     """询问用户要上传到哪些平台"""
-    print("\n📤 选择上传平台:")
-    print("💡 使用方向键移动，空格键选中/取消选中，回车键确认")
+    print("\n选择上传平台:")
+    print("使用方向键移动，空格键选中/取消选中，回车键确认")
     
     platforms = questionary.checkbox(
         "选择要上传到的平台 (可多选):",
@@ -1326,7 +1326,7 @@ def ask_upload_platforms() -> List[str]:
     ).ask()
     
     if not platforms:
-        print("⚠️ 未选择任何平台，将只验证文件")
+        print("未选择任何平台，将只验证文件")
         confirm_no_upload = questionary.confirm(
             "是否确定不上传到任何平台?",
             default=False
@@ -1341,7 +1341,7 @@ def ask_upload_platforms() -> List[str]:
             platform_names.append("IGPSport")
         if "garmin" in platforms:
             platform_names.append("Garmin Connect")
-        print(f"✅ 已选择上传到: {', '.join(platform_names)}")
+        print(f"已选择上传到: {', '.join(platform_names)}")
     
     return platforms or []
 
