@@ -217,4 +217,295 @@ python -c "from config_manager import ConfigManager; cm = ConfigManager(); print
 2. 实现插件系统
 3. 添加API限速处理
 4. 支持批量文件处理
-5. 添加GUI界面 
+5. 添加GUI界面
+
+---
+
+# 双向同步功能（第一阶段）
+
+## 功能概述
+
+第一阶段实现了 **Strava ↔ Garmin Connect** 的双向自动同步功能，包括：
+
+- 智能活动匹配和去重
+- 增量同步，只处理新活动
+- API限制管理
+- 本地缓存优化
+- 完整的同步状态跟踪
+
+## 新增模块
+
+### 双向同步核心模块
+
+```
+src/
+├── main_sync.py              # 双向同步主程序
+├── bidirectional_sync.py     # 双向同步核心逻辑
+├── sync_manager.py           # 同步状态管理
+├── activity_matcher.py       # 活动匹配算法
+├── garmin_sync_client.py     # Garmin同步客户端
+├── test_sync.py              # 双向同步测试脚本
+└── sync_database.json        # 同步数据库（自动生成）
+```
+
+### SyncManager (sync_manager.py)
+- **活动指纹生成**: 基于时间、运动类型、距离、时长生成唯一标识
+- **同步记录管理**: 跟踪所有活动的同步状态
+- **API限制监控**: 实时监控Strava API调用次数
+- **缓存管理**: 本地文件缓存和清理
+- **时间窗口管理**: 支持首次同步和增量同步
+
+### ActivityMatcher (activity_matcher.py)
+- **多维度匹配**: 时间、运动类型、距离、时长的智能匹配
+- **可配置阈值**: 支持自定义匹配容差
+- **置信度评分**: 0.0-1.0的匹配置信度
+- **运动类型标准化**: 统一不同平台的运动类型命名
+
+### BidirectionalSync (bidirectional_sync.py)
+- **双向同步协调**: 管理Strava ↔ Garmin的双向数据流
+- **批量处理**: 支持分批处理大量活动
+- **错误恢复**: 完善的错误处理和重试机制
+- **进度跟踪**: 实时显示同步进度和结果
+
+## 使用方式
+
+### 交互模式
+```bash
+cd src
+python main_sync.py
+```
+
+选择操作：
+- **开始双向同步**: 执行完整的双向同步
+- **配置同步规则**: 设置启用/禁用特定同步方向
+- **查看同步状态**: 显示详细的同步统计信息
+- **清理缓存文件**: 清理过期的活动文件缓存
+
+### 自动模式
+```bash
+# 完整双向同步
+python main_sync.py --auto
+
+# 只同步 Strava -> Garmin
+python main_sync.py --auto --directions strava_to_garmin
+
+# 只同步 Garmin -> Strava  
+python main_sync.py --auto --directions garmin_to_strava
+
+# 指定批处理大小
+python main_sync.py --auto --batch-size 20
+
+# 启用调试模式
+python main_sync.py --debug
+```
+
+## 核心特性
+
+### 1. 智能活动匹配
+
+**匹配算法**:
+- 时间匹配（权重40%）：5分钟容差
+- 运动类型匹配（权重20%）：支持类型映射
+- 距离匹配（权重20%）：5%容差
+- 时长匹配（权重20%）：10%容差
+
+**示例**:
+```python
+# 这两个活动会被识别为同一活动
+activity1 = ActivityMetadata(
+    name="晨跑",
+    sport_type="running", 
+    start_time="2024-01-01T06:00:00Z",
+    distance=5000.0,
+    duration=1800
+)
+
+activity2 = ActivityMetadata(
+    name="Morning Run",
+    sport_type="run",
+    start_time="2024-01-01T06:02:00Z",  # 2分钟差异
+    distance=5020.0,  # 20米差异 
+    duration=1810     # 10秒差异
+)
+```
+
+### 2. 增量同步策略
+
+**首次同步**: 只同步最近30天的活动
+**增量同步**: 从上次同步时间开始，1小时重叠避免遗漏
+
+```python
+# 时间窗口示例
+if not last_sync:
+    start_time = now - timedelta(days=30)  # 首次同步
+else:
+    start_time = last_sync - timedelta(hours=1)  # 增量同步
+```
+
+### 3. API限制管理
+
+**Strava限制**:
+- 每日200次调用（保留20次余量）
+- 每15分钟100次调用（保留10次余量）
+
+**智能调度**:
+- 实时监控API调用次数
+- 达到限制时自动停止同步
+- 显示剩余调用次数
+
+### 4. 本地缓存系统
+
+**缓存结构**:
+```
+activity_cache/
+├── abc123def456.fit    # 活动文件缓存
+├── def789ghi012.tcx
+└── ...
+```
+
+**缓存策略**:
+- 基于活动指纹的文件命名
+- 自动检测已缓存文件，避免重复下载
+- 定期清理过期缓存（默认30天）
+
+### 5. 同步数据库
+
+**数据结构**:
+```json
+{
+  "sync_records": {
+    "activity_fingerprint": {
+      "platforms": {
+        "strava": "12345678",
+        "garmin": "98765432"
+      },
+      "metadata": {
+        "name": "晨跑",
+        "sport_type": "running",
+        "start_time": "2024-01-01T06:00:00Z",
+        "distance": 5000,
+        "duration": 1800
+      },
+      "files": {
+        "fit": "activity_cache/abc123def456.fit"
+      },
+      "sync_status": {
+        "strava_to_garmin": "synced",
+        "garmin_to_strava": "pending"
+      }
+    }
+  },
+  "sync_config": {
+    "last_sync": {
+      "strava": "2024-01-01T12:00:00Z",
+      "garmin": "2024-01-01T11:30:00Z"
+    },
+    "sync_rules": {
+      "strava_to_garmin": true,
+      "garmin_to_strava": true
+    }
+  }
+}
+```
+
+## 测试功能
+
+### 运行测试
+```bash
+cd src
+
+# 运行所有测试
+python test_sync.py
+
+# 运行特定测试
+python test_sync.py --test metadata
+python test_sync.py --test sync_manager
+python test_sync.py --test matcher
+python test_sync.py --test strava
+python test_sync.py --test garmin
+python test_sync.py --test bidirectional
+```
+
+### 测试覆盖
+- 活动元数据创建和转换
+- 同步管理器功能
+- 活动匹配算法
+- Strava客户端功能
+- Garmin客户端功能
+- 双向同步核心逻辑
+
+## 配置要求
+
+### Strava配置
+```json
+{
+  "strava": {
+    "client_id": "your_client_id",
+    "client_secret": "your_client_secret",
+    "refresh_token": "your_refresh_token",
+    "access_token": "",
+    "cookie": "your_browser_cookie"
+  }
+}
+```
+
+### Garmin配置
+```json
+{
+  "garmin": {
+    "username": "your_username", 
+    "password": "your_password",
+    "auth_domain": "GLOBAL"
+  }
+}
+```
+
+## 限制和注意事项
+
+### 当前限制
+1. **Garmin -> Strava**: 由于Strava API限制，暂不支持上传到Strava
+2. **文件格式**: 主要支持FIT格式，TCX和GPX支持有限
+3. **活动类型**: 主要支持跑步、骑行、游泳等常见运动
+
+### 使用建议
+1. **首次同步**: 建议在API限制较少的时段进行
+2. **定期同步**: 建议每日或每周定期运行增量同步
+3. **监控限制**: 注意Strava API调用次数，避免超限
+
+## 故障排除
+
+### 常见问题
+
+1. **同步数据库损坏**
+   ```bash
+   # 删除数据库重新开始
+   rm sync_database.json
+   ```
+
+2. **缓存文件过多**
+   ```bash
+   # 清理缓存
+   python main_sync.py
+   # 选择"清理缓存文件"
+   ```
+
+3. **API限制达到**
+   ```bash
+   # 查看API状态
+   python main_sync.py
+   # 选择"查看同步状态"
+   ```
+
+### 调试模式
+```bash
+# 启用详细调试信息
+python main_sync.py --debug
+```
+
+## 第二阶段计划
+
+1. **IGPSport双向同步**: 扩展支持IGPSport平台
+2. **Strava上传支持**: 研究Strava上传API或网页端自动化
+3. **高级匹配算法**: 基于GPS轨迹的精确匹配
+4. **定时同步**: 支持cron任务和后台运行
+5. **GUI界面**: 提供图形化用户界面 

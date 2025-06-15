@@ -1,0 +1,299 @@
+import sys
+import os
+import logging
+import argparse
+from typing import Optional
+
+# 获取项目根目录路径
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 动态添加Python模块搜索路径
+user_site_packages = os.path.expanduser("~/.local/lib/python3.10/site-packages")
+system_dist_packages = "/usr/lib/python3/dist-packages"
+
+# 将路径添加到sys.path开头，优先级更高
+if user_site_packages not in sys.path:
+    sys.path.insert(0, user_site_packages)
+if system_dist_packages not in sys.path:
+    sys.path.insert(0, system_dist_packages)
+
+from dotenv import load_dotenv
+import questionary
+
+# 导入同步相关模块
+from config_manager import ConfigManager
+from bidirectional_sync import BidirectionalSync
+
+load_dotenv()
+logger = logging.getLogger()
+DEBUG = False  # 全局调试标志
+
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO)
+    handler = logging.FileHandler('sync_logs.log')
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+
+def debug_print(message: str) -> None:
+    """只在调试模式下打印信息"""
+    if DEBUG:
+        print(f"[MainSync] {message}")
+
+
+def show_main_menu() -> str:
+    """显示主菜单"""
+    return questionary.select(
+        "选择操作:",
+        choices=[
+            {"name": "开始双向同步", "value": "sync"},
+            {"name": "配置同步规则", "value": "config"},
+            {"name": "查看同步状态", "value": "status"},
+            {"name": "清理缓存文件", "value": "cleanup"},
+            {"name": "退出", "value": "exit"}
+        ]
+    ).ask()
+
+
+def select_sync_directions() -> list:
+    """选择同步方向"""
+    return questionary.checkbox(
+        "选择要执行的同步方向:",
+        choices=[
+            {"name": "Strava -> Garmin", "value": "strava_to_garmin", "checked": True},
+            {"name": "Garmin -> Strava", "value": "garmin_to_strava", "checked": True}
+        ],
+        instruction="(使用空格键选择，回车键确认)"
+    ).ask()
+
+
+def get_batch_size() -> int:
+    """获取批处理大小"""
+    batch_size = questionary.text(
+        "输入每批处理的活动数量 (默认: 10):",
+        default="10"
+    ).ask()
+    
+    try:
+        return max(1, min(50, int(batch_size)))  # 限制在1-50之间
+    except ValueError:
+        return 10
+
+
+def display_sync_status(sync_engine: BidirectionalSync) -> None:
+    """显示同步状态"""
+    print("\n" + "="*60)
+    print("同步状态信息")
+    print("="*60)
+    
+    try:
+        status = sync_engine.get_sync_status()
+        
+        # 基本统计
+        print(f"\n总活动记录数: {status['total_activities']}")
+        
+        # 各平台活动数量
+        if status['platform_counts']:
+            print("\n各平台活动数量:")
+            for platform, count in status['platform_counts'].items():
+                print(f"  {platform.upper()}: {count}")
+        
+        # 同步状态统计
+        if status['sync_status']:
+            print("\n同步状态统计:")
+            for direction, stats in status['sync_status'].items():
+                direction_name = direction.replace("_", " -> ").upper()
+                print(f"  {direction_name}:")
+                for status_type, count in stats.items():
+                    print(f"    {status_type}: {count}")
+        
+        # 最后同步时间
+        print("\n最后同步时间:")
+        for platform, last_sync in status['last_sync'].items():
+            if last_sync:
+                print(f"  {platform.upper()}: {last_sync}")
+            else:
+                print(f"  {platform.upper()}: 从未同步")
+        
+        # API限制状态
+        if 'api_limits' in status:
+            print("\nAPI限制状态:")
+            for platform, limits in status['api_limits'].items():
+                if 'unlimited' in limits:
+                    print(f"  {platform.upper()}: 无限制")
+                else:
+                    print(f"  {platform.upper()}:")
+                    print(f"    今日剩余: {limits.get('daily_remaining', 'N/A')}")
+                    print(f"    15分钟剩余: {limits.get('quarter_hour_remaining', 'N/A')}")
+        
+        # 缓存信息
+        print(f"\n缓存目录: {status['cache_dir']}")
+        print(f"缓存文件数: {status['cache_files']}")
+        
+    except Exception as e:
+        print(f"获取状态信息失败: {e}")
+    
+    print("="*60)
+
+
+def cleanup_cache(sync_engine: BidirectionalSync) -> None:
+    """清理缓存"""
+    print("\n清理缓存文件...")
+    
+    days = questionary.text(
+        "清理多少天前的缓存文件? (默认: 30天)",
+        default="30"
+    ).ask()
+    
+    try:
+        days = int(days)
+        sync_engine.sync_manager.cleanup_old_cache(days)
+        print("缓存清理完成！")
+    except ValueError:
+        print("输入的天数无效")
+
+
+def check_prerequisites(sync_engine: BidirectionalSync) -> bool:
+    """检查同步前提条件"""
+    print("检查同步前提条件...")
+    
+    issues = []
+    
+    # 检查Strava配置
+    if not sync_engine.strava_client.is_configured():
+        issues.append("Strava API未配置")
+    
+    # 检查Garmin配置
+    try:
+        if not sync_engine.garmin_client.test_connection():
+            issues.append("Garmin Connect连接失败")
+    except Exception as e:
+        issues.append(f"Garmin Connect配置问题: {e}")
+    
+    if issues:
+        print("\n发现以下问题:")
+        for issue in issues:
+            print(f"  - {issue}")
+        
+        print("\n请先解决这些问题再进行同步。")
+        print("参考配置文档:")
+        print("  - Strava API: STRAVA_API_SETUP.md")
+        print("  - Garmin Connect: GARMIN_CONNECT_SETUP.md")
+        
+        return False
+    
+    print("前提条件检查通过！")
+    return True
+
+
+def main():
+    global DEBUG
+    
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='Strava-Garmin双向同步工具')
+    parser.add_argument('--debug', action='store_true', help='启用调试模式，显示详细信息')
+    parser.add_argument('--auto', action='store_true', help='自动模式，使用默认设置直接同步')
+    parser.add_argument('--directions', nargs='+', 
+                       choices=['strava_to_garmin', 'garmin_to_strava'],
+                       help='指定同步方向')
+    parser.add_argument('--batch-size', type=int, default=10, help='批处理大小')
+    args = parser.parse_args()
+    
+    DEBUG = args.debug
+    
+    if DEBUG:
+        print("调试模式已启用")
+    
+    try:
+        # 初始化配置管理器和同步引擎
+        config_manager = ConfigManager()
+        sync_engine = BidirectionalSync(config_manager, DEBUG)
+        
+        print("欢迎使用Strava-Garmin双向同步工具！")
+        
+        # 自动模式
+        if args.auto:
+            print("\n自动同步模式")
+            
+            if not check_prerequisites(sync_engine):
+                return
+            
+            directions = args.directions or ["strava_to_garmin", "garmin_to_strava"]
+            batch_size = args.batch_size
+            
+            print(f"同步方向: {', '.join(directions)}")
+            print(f"批处理大小: {batch_size}")
+            
+            sync_engine.run_sync(directions, batch_size)
+            return
+        
+        # 交互模式
+        while True:
+            try:
+                action = show_main_menu()
+                
+                if action == "exit":
+                    print("再见！")
+                    break
+                
+                elif action == "sync":
+                    print("\n准备开始双向同步...")
+                    
+                    # 检查前提条件
+                    if not check_prerequisites(sync_engine):
+                        continue
+                    
+                    # 选择同步方向
+                    directions = select_sync_directions()
+                    
+                    if not directions:
+                        print("未选择任何同步方向")
+                        continue
+                    
+                    # 获取批处理大小
+                    batch_size = get_batch_size()
+                    
+                    print(f"\n将执行以下同步:")
+                    for direction in directions:
+                        direction_name = direction.replace("_", " -> ").upper()
+                        print(f"  - {direction_name}")
+                    print(f"批处理大小: {batch_size}")
+                    
+                    # 确认执行
+                    if questionary.confirm("确认开始同步?").ask():
+                        sync_engine.run_sync(directions, batch_size)
+                    else:
+                        print("同步已取消")
+                
+                elif action == "config":
+                    sync_engine.configure_sync_rules()
+                
+                elif action == "status":
+                    display_sync_status(sync_engine)
+                
+                elif action == "cleanup":
+                    cleanup_cache(sync_engine)
+                
+            except KeyboardInterrupt:
+                print("\n操作被用户中断")
+                break
+            except Exception as e:
+                logger.error(f"操作失败: {e}")
+                print(f"操作失败: {e}")
+                
+                if DEBUG:
+                    import traceback
+                    traceback.print_exc()
+    
+    except Exception as e:
+        logger.error(f"程序初始化失败: {e}")
+        print(f"程序初始化失败: {e}")
+        
+        if DEBUG:
+            import traceback
+            traceback.print_exc()
+
+
+if __name__ == "__main__":
+    main() 

@@ -1,28 +1,20 @@
-# Strava to TrainingPeaks 多平台同步工具
+# Strava-Garmin 双向同步工具
 
-一个功能强大的工具，可以从Strava下载活动并同步到多个训练平台，包括IGPSport和Garmin Connect。
+一个功能强大的多平台运动数据同步工具，支持 Strava、Garmin Connect 和 IGPSport 之间的数据同步。
 
 ## 🚀 主要功能
 
-- **多数据源支持**：
-  - 从Strava API自动获取最新活动
-  - 手动输入活动ID下载
-  - 支持本地文件上传
+### 1. 单向上传（原有功能）
+- 从 Strava 下载活动文件
+- 上传到 Garmin Connect 和 IGPSport
+- 支持多种文件格式（FIT、TCX、GPX）
 
-- **多平台同步**：
-  - **IGPSport**：中国本土运动平台
-  - **Garmin Connect**：全球领先的运动数据平台
-  - 可同时上传到多个平台
-
-- **智能文件处理**：
-  - 自动检测现有文件，避免重复下载
-  - 支持FIT、TCX、GPX等多种格式
-  - 智能文件命名（活动名+ID）
-
-- **用户友好**：
-  - 交互式命令行界面
-  - 凭据安全保存
-  - 详细的调试信息
+### 2. 双向同步（新功能）
+- **Strava ↔ Garmin Connect** 双向自动同步
+- 智能活动匹配，避免重复同步
+- 增量同步，只处理新活动
+- API限制管理，避免超出调用限制
+- 本地缓存，提高同步效率
 
 ## 📦 安装依赖
 
@@ -56,25 +48,38 @@ pip install -r requirements.txt
 
 ## 🎯 使用方法
 
-### 基本使用
-
+### 单向上传（兼容原功能）
 ```bash
 cd src
-python main.py
+python main_refactored.py
 ```
 
-### 调试模式
-
+### 双向同步（新功能）
 ```bash
 cd src
-python main.py --debug
+python main_sync.py
 ```
 
-### 测试Garmin功能
+#### 交互模式
+运行后选择操作：
+- **开始双向同步**: 执行 Strava ↔ Garmin 同步
+- **配置同步规则**: 设置同步方向和规则
+- **查看同步状态**: 显示同步统计和状态
+- **清理缓存文件**: 清理过期的活动文件缓存
 
+#### 自动模式
 ```bash
-cd src
-python test_garmin_upload.py
+# 自动执行双向同步
+python main_sync.py --auto
+
+# 只同步 Strava -> Garmin
+python main_sync.py --auto --directions strava_to_garmin
+
+# 指定批处理大小
+python main_sync.py --auto --batch-size 20
+
+# 启用调试模式
+python main_sync.py --debug
 ```
 
 ## 📋 使用流程
@@ -112,10 +117,16 @@ python test_garmin_upload.py
 
 ```
 ├── src/
-│   ├── main.py              # 主程序
-│   ├── garmin_client.py     # Garmin Connect客户端
-│   ├── garmin_url_dict.py   # Garmin API配置
-│   └── test_garmin_upload.py # Garmin功能测试
+│   ├── main_sync.py              # 双向同步主程序
+│   ├── main_refactored.py        # 单向上传主程序
+│   ├── bidirectional_sync.py     # 双向同步核心逻辑
+│   ├── sync_manager.py           # 同步状态管理
+│   ├── activity_matcher.py       # 活动匹配算法
+│   ├── garmin_sync_client.py     # Garmin同步客户端
+│   ├── strava_client.py          # Strava客户端（扩展）
+│   ├── config_manager.py         # 配置管理
+│   ├── ui_utils.py              # 用户界面工具
+│   └── ...
 ├── .app_config.json         # 统一配置文件
 ├── requirements.txt         # Python依赖
 └── README.md               # 项目说明
@@ -128,28 +139,21 @@ python test_garmin_upload.py
 ```json
 {
   "strava": {
-    "client_id": "你的Strava应用ID",
-    "client_secret": "你的Strava应用密钥",
-    "refresh_token": "你的Strava刷新令牌",
-    "access_token": "自动生成的访问令牌",
-    "cookie": "用于下载的Strava Cookie"
-  },
-  "igpsport": {
-    "login_token": "IGPSport登录令牌",
-    "username": "IGPSport用户名",
-    "password": "IGPSport密码"
+    "client_id": "your_client_id",
+    "client_secret": "your_client_secret", 
+    "refresh_token": "your_refresh_token",
+    "access_token": "",
+    "cookie": ""
   },
   "garmin": {
-    "username": "Garmin Connect用户名",
-    "password": "Garmin Connect密码",
-    "auth_domain": "GLOBAL或CN",
-    "session_cookies": "会话Cookie",
-    "oauth_token": "OAuth令牌",
-    "oauth_token_secret": "OAuth密钥"
+    "username": "your_username",
+    "password": "your_password",
+    "auth_domain": "GLOBAL"
   },
-  "general": {
-    "debug_mode": false,
-    "auto_save_credentials": true
+  "igpsport": {
+    "username": "",
+    "password": "",
+    "login_token": ""
   }
 }
 ```

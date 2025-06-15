@@ -1,99 +1,209 @@
 import os
+import sys
+
+# 获取项目根目录路径
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 动态添加Python模块搜索路径
+user_site_packages = os.path.expanduser("~/.local/lib/python3.10/site-packages")
+system_dist_packages = "/usr/lib/python3/dist-packages"
+
+# 将路径添加到sys.path开头，优先级更高
+if user_site_packages not in sys.path:
+    sys.path.insert(0, user_site_packages)
+if system_dist_packages not in sys.path:
+    sys.path.insert(0, system_dist_packages)
+    
 import time
 import logging
 import requests
+import json
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 
 from config_manager import ConfigManager
 from file_utils import FileUtils
 from ui_utils import UIUtils
+from database_manager import ActivityMetadata
 
 logger = logging.getLogger(__name__)
 
 class StravaClient:
-    """Strava客户端"""
+    """扩展的Strava客户端，支持双向同步功能"""
     
     def __init__(self, config_manager: ConfigManager, debug: bool = False):
         self.config_manager = config_manager
         self.debug = debug
+        self.base_url = "https://www.strava.com/api/v3"
     
     def debug_print(self, message: str) -> None:
         """只在调试模式下打印信息"""
         if self.debug:
-            print(message)
+            print(f"[StravaClient] {message}")
     
     def is_configured(self) -> bool:
         """检查Strava是否已配置"""
-        return self.config_manager.is_platform_configured("strava")
-    
-    def refresh_token(self) -> str:
-        """刷新Strava访问令牌"""
         config = self.config_manager.get_platform_config("strava")
-        self.debug_print("刷新Strava访问令牌...")
+        return bool(config.get("client_id") and config.get("client_secret") and config.get("refresh_token"))
+    
+    def _refresh_access_token(self) -> bool:
+        """刷新访问令牌"""
+        config = self.config_manager.get_platform_config("strava")
         
-        url = "https://www.strava.com/oauth/token"
-        data = {
-            "client_id": config["client_id"],
-            "client_secret": config["client_secret"],
-            "refresh_token": config["refresh_token"],
-            "grant_type": "refresh_token"
+        refresh_data = {
+            'client_id': config.get("client_id"),
+            'client_secret': config.get("client_secret"),
+            'refresh_token': config.get("refresh_token"),
+            'grant_type': 'refresh_token'
         }
         
         try:
-            response = requests.post(url, data=data)
-            self.debug_print(f"Token刷新响应状态码: {response.status_code}")
+            print("刷新Strava访问令牌...")
+            response = requests.post('https://www.strava.com/oauth/token', data=refresh_data)
+            print(f"Token刷新响应状态码: {response.status_code}")
             
             if response.status_code == 200:
                 token_data = response.json()
-                new_access_token = token_data["access_token"]
                 
-                # 更新配置中的access_token
-                config["access_token"] = new_access_token
-                if "refresh_token" in token_data:
-                    config["refresh_token"] = token_data["refresh_token"]
-                    
-                # 保存更新后的配置
+                # 更新配置中的访问令牌
+                config["access_token"] = token_data['access_token']
+                config["refresh_token"] = token_data['refresh_token']
                 self.config_manager.save_platform_config("strava", config)
                 
-                self.debug_print("Strava访问令牌刷新成功")
-                return new_access_token
+                print("Strava访问令牌刷新成功")
+                return True
             else:
-                self.debug_print(f"Token刷新失败: {response.text}")
-                raise ValueError("无法刷新Strava访问令牌，请检查配置")
+                print(f"Token刷新失败: {response.text}")
+                return False
                 
         except Exception as e:
-            logger.error(f"刷新Strava令牌失败: {e}")
-            raise
+            logger.error(f"刷新Strava访问令牌失败: {e}")
+            return False
     
-    def get_activities(self, limit: int = 10) -> List[Dict]:
-        """获取用户的Strava活动列表"""
-        access_token = self.refresh_token()
-        self.debug_print(f"获取最新的{limit}个Strava活动...")
+    def _get_headers(self) -> Dict[str, str]:
+        """获取API请求头"""
+        config = self.config_manager.get_platform_config("strava")
+        access_token = config.get("access_token")
         
-        url = "https://www.strava.com/api/v3/athlete/activities"
-        headers = {
-            "Authorization": f"Bearer {access_token}"
-        }
-        params = {
-            "per_page": limit,
-            "page": 1
-        }
+        if not access_token:
+            if not self._refresh_access_token():
+                raise Exception("无法获取有效的访问令牌")
+            access_token = config.get("access_token")
         
+        return {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+    
+    def get_activities(self, limit: int = 30, page: int = 1) -> List[Dict]:
+        """获取活动列表"""
         try:
-            response = requests.get(url, headers=headers, params=params)
-            self.debug_print(f"活动列表响应状态码: {response.status_code}")
+            headers = self._get_headers()
+            params = {
+                'per_page': min(limit, 200),  # Strava限制每页最多200
+                'page': page
+            }
+            
+            print(f"获取Strava活动列表，限制: {limit}")
+            response = requests.get(f"{self.base_url}/athlete/activities", 
+                                  headers=headers, params=params)
+            print(f"活动列表响应状态码: {response.status_code}")
             
             if response.status_code == 200:
                 activities = response.json()
-                self.debug_print(f"成功获取{len(activities)}个活动")
+                print(f"成功获取{len(activities)}个活动")
                 return activities
+            elif response.status_code == 401:
+                # Token可能过期，尝试刷新
+                if self._refresh_access_token():
+                    headers = self._get_headers()
+                    response = requests.get(f"{self.base_url}/athlete/activities", 
+                                          headers=headers, params=params)
+                    if response.status_code == 200:
+                        activities = response.json()
+                        print(f"重试后成功获取{len(activities)}个活动")
+                        return activities
+                
+                raise Exception(f"认证失败: {response.text}")
             else:
-                self.debug_print(f"获取活动列表失败: {response.text}")
-                raise ValueError("无法获取活动列表")
+                raise Exception(f"获取活动失败: {response.status_code} - {response.text}")
                 
         except Exception as e:
             logger.error(f"获取Strava活动失败: {e}")
+            return []
+    
+    def get_activities_in_batches(self, total_limit: int = 50, 
+                                after: Optional[datetime] = None,
+                                before: Optional[datetime] = None) -> List[Dict]:
+        """分批获取活动"""
+        all_activities = []
+        page = 1
+        per_page = min(30, total_limit)
+        
+        while len(all_activities) < total_limit:
+            remaining = total_limit - len(all_activities)
+            current_limit = min(per_page, remaining)
+            
+            print(f"获取第{page}页活动，每页{current_limit}个")
+            activities = self.get_activities(limit=current_limit, page=page)
+            
+            if not activities:
+                break
+            
+            # 时间过滤
+            filtered_activities = []
+            for activity in activities:
+                activity_time = datetime.fromisoformat(activity['start_date'].replace('Z', '+00:00'))
+                
+                if after and activity_time < after:
+                    continue
+                if before and activity_time > before:
+                    continue
+                    
+                filtered_activities.append(activity)
+            
+            all_activities.extend(filtered_activities)
+            
+            # 如果这一页的活动数量少于请求数量，说明没有更多了
+            if len(activities) < current_limit:
+                break
+                
+            page += 1
+        
+        print(f"总共获取{len(all_activities)}个活动")
+        return all_activities[:total_limit]
+    
+    def convert_to_activity_metadata(self, strava_activity: Dict) -> ActivityMetadata:
+        """将Strava活动数据转换为ActivityMetadata"""
+        return ActivityMetadata(
+            name=strava_activity.get("name", "未命名活动"),
+            sport_type=strava_activity.get("sport_type", "unknown"),
+            start_time=strava_activity.get("start_date", ""),
+            distance=float(strava_activity.get("distance", 0)),
+            duration=int(strava_activity.get("elapsed_time", 0)),
+            elevation_gain=float(strava_activity.get("total_elevation_gain", 0))
+        )
+    
+    def get_activity_details(self, activity_id: str) -> Dict:
+        """获取活动详细信息"""
+        access_token = self._get_headers()['Authorization'].split(' ')[1]
+        self.debug_print(f"获取活动{activity_id}的详细信息")
+        
+        url = f"{self.base_url}/activities/{activity_id}"
+        headers = {"Authorization": f"Bearer {access_token}"}
+        
+        try:
+            response = requests.get(url, headers=headers)
+            self.debug_print(f"活动详情响应状态码: {response.status_code}")
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                self.debug_print(f"获取活动详情失败: {response.text}")
+                raise ValueError(f"无法获取活动{activity_id}的详情")
+                
+        except Exception as e:
+            logger.error(f"获取Strava活动详情失败: {e}")
             raise
     
     def select_activity_from_api(self) -> Tuple[str, Optional[str]]:
@@ -152,6 +262,33 @@ class StravaClient:
         
         # 直接使用Cookie认证下载
         return self._download_with_cookie(url, activity_id, activity_name)
+    
+    def download_activity_file(self, activity_id: str, save_path: str) -> bool:
+        """下载活动文件"""
+        try:
+            self.debug_print(f"下载Strava活动文件: {activity_id}")
+            
+            # 使用现有的下载逻辑
+            from main_refactored import download_strava_activity
+            
+            # 临时创建一个配置对象
+            temp_config = {
+                'strava': self.config_manager.get_platform_config("strava")
+            }
+            
+            success = download_strava_activity(activity_id, save_path, temp_config)
+            
+            if success:
+                self.debug_print(f"文件已下载到: {save_path}")
+                return True
+            else:
+                self.debug_print("文件下载失败")
+                return False
+                
+        except Exception as e:
+            self.debug_print(f"下载活动文件失败: {e}")
+            logger.error(f"下载Strava活动文件失败: {e}")
+            return False
     
     def _download_with_cookie(self, url: str, activity_id: str, activity_name: Optional[str] = None) -> Optional[str]:
         """使用Cookie进行认证下载"""
