@@ -2,6 +2,7 @@ import logging
 import os
 from enum import Enum, auto
 import requests
+import uuid
 
 try:
     import garth
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class GarminClient:
-    def __init__(self, email, password, auth_domain="GLOBAL"):
+    def __init__(self, email, password, auth_domain="GLOBAL", config_manager=None):
         if not GARTH_AVAILABLE:
             raise ImportError("需要安装garth库：pip install garth")
             
@@ -23,6 +24,8 @@ class GarminClient:
         self.email = email
         self.password = password
         self.garthClient = garth
+        self.config_manager = config_manager
+        
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36",
             "origin": GARMIN_URL_DICT.get("SSO_URL_ORIGIN"),
@@ -33,7 +36,176 @@ class GarminClient:
         print(f"🔧 初始化GarminClient:")
         print(f"   - 邮箱: {email}")
         print(f"   - 认证域: {auth_domain}")
+        print(f"   - 配置管理器: {'已设置' if config_manager else '未设置'}")
         print(f"   - SSO来源: {GARMIN_URL_DICT.get('SSO_URL_ORIGIN')}")
+        
+        # 尝试恢复已保存的会话
+        self._try_resume_session()
+
+    def _get_session_data(self):
+        """从配置文件获取会话数据"""
+        if not self.config_manager:
+            return None
+        
+        try:
+            garmin_config = self.config_manager.get_platform_config("garmin")
+            session_data = garmin_config.get("session_data", {})
+            
+            # 检查会话数据是否匹配当前用户和域名
+            saved_email = session_data.get("email", "")
+            saved_domain = session_data.get("auth_domain", "")
+            
+            if saved_email == self.email and saved_domain == self.auth_domain:
+                return session_data.get("garth_session", None)
+            else:
+                print(f"会话数据不匹配当前用户 ({self.email}) 或域名 ({self.auth_domain})")
+                return None
+                
+        except Exception as e:
+            print(f"获取会话数据失败: {e}")
+            return None
+
+    def _save_session_data(self, session_data):
+        """保存会话数据到配置文件"""
+        if not self.config_manager:
+            print("配置管理器未设置，无法保存会话")
+            return False
+        
+        try:
+            garmin_config = self.config_manager.get_platform_config("garmin")
+            
+            # 保存会话数据，包含用户和域名信息
+            garmin_config["session_data"] = {
+                "email": self.email,
+                "auth_domain": self.auth_domain,
+                "garth_session": session_data
+            }
+            
+            self.config_manager.save_platform_config("garmin", garmin_config)
+            print("Garmin会话已保存到配置文件")
+            return True
+            
+        except Exception as e:
+            print(f"保存会话数据失败: {e}")
+            return False
+
+    def _clear_session_data(self):
+        """清除配置文件中的会话数据"""
+        if not self.config_manager:
+            return
+        
+        try:
+            garmin_config = self.config_manager.get_platform_config("garmin")
+            if "session_data" in garmin_config:
+                del garmin_config["session_data"]
+                self.config_manager.save_platform_config("garmin", garmin_config)
+                print("已清除配置文件中的会话数据")
+        except Exception as e:
+            print(f"清除会话数据失败: {e}")
+
+    def _try_resume_session(self):
+        """尝试恢复已保存的会话"""
+        session_data = self._get_session_data()
+        if not session_data:
+            print("未找到已保存的会话数据")
+            return False
+        
+        try:
+            print("尝试恢复已保存的Garmin会话...")
+            
+            # 配置garth域名
+            if self.auth_domain and str(self.auth_domain).upper() == "CN":
+                target_domain = "garmin.cn"
+            else:
+                target_domain = "garmin.com"
+            
+            self.garthClient.configure(domain=target_domain)
+            
+            # 创建临时会话目录
+            import tempfile
+            import json
+            import os
+            
+            # 创建临时目录（garth需要目录路径）
+            temp_dir = tempfile.mkdtemp(prefix="garmin_resume_")
+            
+            try:
+                # 恢复所有会话文件
+                for filename, file_data in session_data.items():
+                    if filename.endswith('.json'):
+                        session_file_path = os.path.join(temp_dir, filename)
+                        with open(session_file_path, 'w') as temp_file:
+                            json.dump(file_data, temp_file)
+                
+                # 尝试恢复会话
+                self.garthClient.resume(temp_dir)
+                
+                # 验证会话是否有效
+                username = self.garthClient.client.username
+                print(f"会话恢复成功！用户名: {username}")
+                self._logged_in = True
+                return True
+                
+            finally:
+                # 清理临时目录
+                try:
+                    import shutil
+                    if os.path.exists(temp_dir):
+                        shutil.rmtree(temp_dir)
+                except Exception as cleanup_e:
+                    print(f"清理临时目录失败: {cleanup_e}")
+            
+        except Exception as e:
+            print(f"会话恢复失败: {e}")
+            print("将使用用户名密码重新登录")
+            # 清除无效的会话数据
+            self._clear_session_data()
+            return False
+
+    def _save_session(self):
+        """保存当前会话"""
+        try:
+            # 创建临时会话文件
+            import tempfile
+            import json
+            import os
+            
+            # 创建临时目录（garth需要目录路径）
+            temp_dir = tempfile.mkdtemp(prefix="garmin_session_")
+            
+            try:
+                # 保存到临时目录
+                self.garthClient.save(temp_dir)
+                
+                # 读取所有会话文件
+                session_data = {}
+                for file in os.listdir(temp_dir):
+                    if file.endswith('.json'):
+                        file_path = os.path.join(temp_dir, file)
+                        with open(file_path, 'r') as f:
+                            session_data[file] = json.load(f)
+                
+                if not session_data:
+                    raise Exception("未找到会话文件")
+                
+                # 保存到配置文件
+                success = self._save_session_data(session_data)
+                if success:
+                    print("会话保存成功")
+                return success
+                
+            finally:
+                # 清理临时目录
+                try:
+                    import shutil
+                    if os.path.exists(temp_dir):
+                        shutil.rmtree(temp_dir)
+                except Exception as cleanup_e:
+                    print(f"清理临时目录失败: {cleanup_e}")
+                    
+        except Exception as e:
+            print(f"保存会话失败: {e}")
+            return False
 
     def login(func):    
         def wrapper(self, *args, **kwargs):    
@@ -79,6 +251,9 @@ class GarminClient:
                     self._logged_in = True
                     print("Garmin登录成功！")
                     
+                    # 保存会话
+                    self._save_session()
+                    
                     # 验证登录后的状态
                     try:
                         logged_user = garth.client.username
@@ -115,12 +290,26 @@ class GarminClient:
                         print("可能的原因:")
                         print("   - Garmin检测到自动化登录并要求额外验证")
                         print("   - 需要在浏览器中完成人工验证")
+                    elif "Too Many Requests" in str(login_e) or "429" in str(login_e):
+                        print("检测到登录频率限制")
+                        print("建议解决方案:")
+                        print("   - 等待1小时后重试")
+                        print("   - 或者使用已保存的会话文件")
                         
                     self._logged_in = False
                     raise login_e
                     
             return func(self, *args, **kwargs)
         return wrapper
+
+    def clear_session(self):
+        """清除保存的会话"""
+        try:
+            self._clear_session_data()
+            self._logged_in = False
+            print("会话已清除，下次将重新登录")
+        except Exception as e:
+            print(f"清除会话失败: {e}")
 
     @login 
     def download(self, path, **kwargs):

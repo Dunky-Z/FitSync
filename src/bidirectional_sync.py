@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import logging
 from datetime import datetime, timedelta
@@ -369,4 +370,45 @@ class BidirectionalSync:
             
             self.sync_manager.set_sync_rule(source, target, enable)
         
-        print("\n同步规则配置完成！") 
+        print("\n同步规则配置完成！")
+    
+    def clear_garmin_session(self) -> None:
+        """清除Garmin会话"""
+        print("\n清除Garmin会话...")
+        
+        try:
+            # 检查是否有Garmin配置
+            garmin_config = self.config_manager.get_platform_config("garmin")
+            if not garmin_config.get("username"):
+                print("未找到Garmin配置信息")
+                return
+            
+            # 检查是否有会话数据
+            session_data = garmin_config.get("session_data", {})
+            if not session_data:
+                print("未找到Garmin会话数据")
+                return
+            
+            print(f"找到用户 {session_data.get('email', 'unknown')} 的会话数据")
+            
+            import questionary
+            confirm = questionary.confirm(
+                "确认清除Garmin会话数据？清除后下次同步需要重新登录",
+                default=False
+            ).ask()
+            
+            if confirm:
+                # 清除会话数据
+                if "session_data" in garmin_config:
+                    del garmin_config["session_data"]
+                    self.config_manager.save_platform_config("garmin", garmin_config)
+                    print("Garmin会话数据已清除")
+                    print("下次同步时将需要重新登录")
+                else:
+                    print("未找到需要清除的会话数据")
+            else:
+                print("操作已取消")
+                
+        except Exception as e:
+            print(f"清除Garmin会话失败: {e}")
+            logger.error(f"清除Garmin会话失败: {e}") 

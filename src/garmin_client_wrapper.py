@@ -61,9 +61,30 @@ class GarminClientWrapper:
         """创建Garmin客户端实例"""
         try:
             from garmin_client import GarminClient
-            return GarminClient(username, password, auth_domain)
+            return GarminClient(username, password, auth_domain, self.config_manager)
         except ImportError as e:
             raise ImportError("无法导入garmin_client模块") from e
+    
+    def clear_session(self, username: str = None, auth_domain: str = None) -> None:
+        """清除保存的Garmin会话"""
+        try:
+            if username and auth_domain:
+                # 创建临时客户端实例来清除会话
+                temp_client = self._create_garmin_client(username, "dummy", auth_domain)
+                temp_client.clear_session()
+            else:
+                # 如果没有指定用户，尝试从配置中获取
+                config = self.config_manager.get_platform_config("garmin")
+                saved_username = config.get("username", "")
+                saved_domain = config.get("auth_domain", "GLOBAL")
+                
+                if saved_username:
+                    temp_client = self._create_garmin_client(saved_username, "dummy", saved_domain)
+                    temp_client.clear_session()
+                else:
+                    print("未找到保存的用户信息，无法清除会话")
+        except Exception as e:
+            print(f"清除会话失败: {e}")
     
     def upload_file(self, file_path: str) -> None:
         """上传活动到Garmin Connect"""
@@ -80,7 +101,7 @@ class GarminClientWrapper:
             username, password, auth_domain = self.get_credentials()
             
             # 尝试上传，如果失败则提供重试选项
-            max_retries = 2
+            max_retries = 3  # 增加重试次数
             for attempt in range(max_retries):
                 try:
                     # 创建Garmin客户端
@@ -102,7 +123,43 @@ class GarminClientWrapper:
                         return
                         
                 except Exception as e:
-                    if "Update Phone Number" in str(e) or "Unexpected title" in str(e):
+                    error_str = str(e)
+                    
+                    if "Too Many Requests" in error_str or "429" in error_str:
+                        print(f"\n检测到登录频率限制（尝试 {attempt + 1}/{max_retries}）")
+                        print("这通常是因为短时间内多次登录导致的")
+                        
+                        if attempt < max_retries - 1:
+                            retry_options = questionary.select(
+                                "选择下一步操作:",
+                                choices=[
+                                    {"name": "清除会话并重新登录", "value": "clear_session"},
+                                    {"name": "等待并重试", "value": "wait_retry"},
+                                    {"name": "放弃上传", "value": "abort"}
+                                ]
+                            ).ask()
+                            
+                            if retry_options == "clear_session":
+                                print("清除已保存的会话...")
+                                garmin_client.clear_session()
+                                print("会话已清除，将在下次重试时重新登录")
+                                continue
+                            elif retry_options == "wait_retry":
+                                print("等待30秒后重试...")
+                                import time
+                                time.sleep(30)
+                                continue
+                            else:
+                                print("用户选择放弃上传")
+                                return
+                        else:
+                            print("\n建议解决方案:")
+                            print("1. 等待1小时后重试")
+                            print("2. 或者使用以下命令清除所有会话:")
+                            print("   python -c \"from src.garmin_client_wrapper import GarminClientWrapper; from src.config_manager import ConfigManager; wrapper = GarminClientWrapper(ConfigManager()); wrapper.clear_session()\"")
+                            raise e
+                    
+                    elif "Update Phone Number" in error_str or "Unexpected title" in error_str:
                         print(f"\n检测到Garmin Connect反自动化验证（尝试 {attempt + 1}/{max_retries}）")
                         
                         if attempt < max_retries - 1:  # 不是最后一次尝试
@@ -111,6 +168,7 @@ class GarminClientWrapper:
                             retry_options = questionary.select(
                                 "选择下一步操作:",
                                 choices=[
+                                    {"name": "清除会话并重新登录", "value": "clear_session"},
                                     {"name": "切换到中国版服务器 (garmin.cn)", "value": "switch_cn"},
                                     {"name": "切换到全球版服务器 (garmin.com)", "value": "switch_global"},
                                     {"name": "重新输入登录信息", "value": "re_login"},
@@ -118,7 +176,12 @@ class GarminClientWrapper:
                                 ]
                             ).ask()
                             
-                            if retry_options == "switch_cn":
+                            if retry_options == "clear_session":
+                                print("清除已保存的会话...")
+                                garmin_client.clear_session()
+                                print("会话已清除，将在下次重试时重新登录")
+                                continue
+                            elif retry_options == "switch_cn":
                                 auth_domain = "CN"
                                 print("已切换到中国版服务器，重试中...")
                                 continue
@@ -145,6 +208,7 @@ class GarminClientWrapper:
                             print("3. 完成任何必要的验证步骤")
                             print("4. 确保能正常访问主页")
                             print("5. 保持浏览器窗口打开，重新运行此程序")
+                            print("6. 或者清除会话文件重新开始")
                             
                             raise e
                     else:
@@ -159,4 +223,10 @@ class GarminClientWrapper:
                 print(f"导入错误: {e}")
         except Exception as e:
             logger.error(f"Garmin Connect上传失败: {e}")
-            print(f"Garmin Connect上传失败: {e}") 
+            print(f"Garmin Connect上传失败: {e}")
+            
+            # 如果是会话相关的错误，提供清除会话的建议
+            if "session" in str(e).lower() or "login" in str(e).lower():
+                print("\n提示: 如果持续遇到登录问题，可以尝试清除会话:")
+                print("1. 删除 .garmin_sessions 文件夹")
+                print("2. 重新运行程序") 

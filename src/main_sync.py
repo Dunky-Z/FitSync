@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*- 
+
 import sys
 import os
 import logging
@@ -51,6 +54,7 @@ def show_main_menu() -> str:
             {"name": "配置同步规则", "value": "config"},
             {"name": "查看同步状态", "value": "status"},
             {"name": "清理缓存文件", "value": "cleanup"},
+            {"name": "清除Garmin会话", "value": "clear_garmin_session"},
             {"name": "退出", "value": "exit"}
         ]
     ).ask()
@@ -174,6 +178,11 @@ def cleanup_cache(sync_engine: BidirectionalSync) -> None:
         print("缓存清理完成！")
     except ValueError:
         print("输入的天数无效")
+
+
+def clear_garmin_session(sync_engine: BidirectionalSync) -> None:
+    """清除Garmin会话"""
+    sync_engine.clear_garmin_session()
 
 
 def check_prerequisites(sync_engine: BidirectionalSync) -> bool:
@@ -307,6 +316,9 @@ def main():
                 
                 elif action == "cleanup":
                     cleanup_cache(sync_engine)
+                
+                elif action == "clear_garmin_session":
+                    clear_garmin_session(sync_engine)
                 
             except KeyboardInterrupt:
                 print("\n操作被用户中断")
