@@ -1,12 +1,20 @@
-cx_Freeze==8.3.0
+requests==2.28.1
+fitdecode==0.9.0
+gpxpy==1.5.0
+python-dateutil==2.8.2
+inquirer==3.4.0
+garth==0.5.7
+pandas==1.5.3
+numpy==1.23.5
+fit2gpx>=1.0.0
+
 defusedxml==0.7.1
-garth>=0.4.0
-numpy==2.0.2
 oss2==2.18.4
-pandas==2.2.3
 python-dotenv==1.1.0
 questionary==2.1.0
-requests==2.32.3
-scipy==1.15.2
+scipy==1.11.4
 tcxreader==0.4.11
 tqdm==4.67.1
+
+# FIT文件处理相关依赖
+lxml>=4.6.0           # XML处理库（用于TCX转换）

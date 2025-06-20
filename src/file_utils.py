@@ -1,6 +1,7 @@
 import os
 import logging
-from typing import Optional
+from typing import Optional, Dict, List, Tuple
+from datetime import datetime
 from defusedxml.minidom import parseString
 from tcxreader.tcxreader import TCXReader
 
@@ -184,4 +185,127 @@ class FileUtils:
                 except Exception:
                     continue
         
-        return None 
+        return None
+    
+    @staticmethod
+    def analyze_fit_file(file_path: str) -> Dict:
+        """
+        分析FIT文件内容
+        
+        Args:
+            file_path: FIT文件路径
+            
+        Returns:
+            包含文件分析信息的字典
+        """
+        try:
+            import fitdecode
+            
+            analysis = {
+                'total_records': 0,
+                'duration_seconds': 0,
+                'total_distance_meters': 0,
+                'has_heart_rate': False,
+                'has_power': False,
+                'has_cadence': False,
+                'has_gps': False
+            }
+            
+            # 简单的FIT文件分析
+            with fitdecode.FitReader(file_path) as fit_reader:
+                records = []
+                for frame in fit_reader:
+                    if isinstance(frame, fitdecode.FitDataMessage):
+                        if frame.name == 'record':
+                            records.append(frame)
+                            # 检查数据类型
+                            for field in frame.fields:
+                                if field.name == 'heart_rate' and field.value is not None:
+                                    analysis['has_heart_rate'] = True
+                                elif field.name == 'power' and field.value is not None:
+                                    analysis['has_power'] = True
+                                elif field.name == 'cadence' and field.value is not None:
+                                    analysis['has_cadence'] = True
+                                elif field.name in ['position_lat', 'position_long'] and field.value is not None:
+                                    analysis['has_gps'] = True
+                
+                analysis['total_records'] = len(records)
+                
+                if records:
+                    # 计算时长
+                    start_time = None
+                    end_time = None
+                    total_distance = 0
+                    
+                    for record in records:
+                        for field in record.fields:
+                            if field.name == 'timestamp' and field.value is not None:
+                                if start_time is None:
+                                    start_time = field.value
+                                end_time = field.value
+                            elif field.name == 'distance' and field.value is not None:
+                                total_distance = field.value
+                    
+                    if start_time and end_time:
+                        analysis['duration_seconds'] = (end_time - start_time).total_seconds()
+                    
+                    analysis['total_distance_meters'] = total_distance
+            
+            logger.info(f"FIT文件分析完成: {analysis}")
+            return analysis
+            
+        except ImportError:
+            logger.warning("缺少fitdecode库，无法分析FIT文件")
+            return {}
+        except Exception as e:
+            logger.error(f"分析FIT文件失败: {e}")
+            return {}
+    
+    @staticmethod
+    def convert_fit_to_gpx(fit_file_path: str, output_path: Optional[str] = None, 
+                          include_metadata: bool = True) -> Optional[str]:
+        """
+        将FIT文件转换为GPX格式
+        
+        Args:
+            fit_file_path: FIT文件路径
+            output_path: 输出GPX文件路径（可选，默认与原文件同目录）
+            include_metadata: 是否包含活动元数据
+        
+        Returns:
+            转换后的GPX文件路径，失败时返回None
+        """
+        try:
+            from fit2gpx import Converter
+            
+            # 验证输入文件
+            if not os.path.exists(fit_file_path):
+                raise ValueError(f"FIT文件不存在: {fit_file_path}")
+            
+            # 确定输出路径
+            if output_path is None:
+                base_name = os.path.splitext(fit_file_path)[0]
+                output_path = f"{base_name}.gpx"
+            
+            logger.info(f"开始转换FIT文件: {fit_file_path} -> {output_path}")
+            
+            # 创建转换器
+            conv = Converter()
+            
+            # 执行转换
+            gpx = conv.fit_to_gpx(f_in=fit_file_path, f_out=output_path)
+            
+            if os.path.exists(output_path):
+                logger.info(f"FIT转GPX完成: {output_path}")
+                return output_path
+            else:
+                logger.error("转换完成但输出文件不存在")
+                return None
+            
+        except ImportError as e:
+            logger.error(f"缺少fit2gpx库: {e}")
+            logger.error("请安装: pip install fit2gpx")
+            return None
+        except Exception as e:
+            logger.error(f"FIT转GPX失败: {e}")
+            return None 
