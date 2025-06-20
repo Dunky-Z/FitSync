@@ -362,11 +362,48 @@ def main():
                         for direction in directions:
                             # 检查是否已有迁移进度
                             progress = sync_engine.sync_manager.get_migration_progress("", direction)
-                            if not progress:
+                            custom_start_time = sync_engine.sync_manager.db_manager.get_sync_config(f'migration_start_time_{direction}')
+                            
+                            if not progress and not custom_start_time:
                                 # 首次迁移，让用户选择起始时间
+                                print(f"\n{direction} 首次历史迁移设置")
                                 start_time = select_migration_start_time(direction)
                                 sync_engine.sync_manager.set_migration_start_time(direction, start_time)
                                 print(f"已设置{direction}迁移起始时间: {start_time}")
+                            elif custom_start_time:
+                                # 已有自定义起始时间，询问是否要重新设置
+                                print(f"{direction} 当前起始时间: {custom_start_time}")
+                                reset_start_time = questionary.confirm(
+                                    f"是否要重新设置 {direction} 的起始时间？",
+                                    default=False
+                                ).ask()
+                                
+                                if reset_start_time:
+                                    print(f"\n重新设置 {direction} 历史迁移起始时间")
+                                    start_time = select_migration_start_time(direction)
+                                    sync_engine.sync_manager.set_migration_start_time(direction, start_time)
+                                    # 如果有迁移进度且起始时间改变了，清除进度
+                                    if progress and start_time != custom_start_time:
+                                        sync_engine.sync_manager.db_manager.set_sync_config(f'migration_progress_{direction}', '')
+                                        print(f"起始时间已更改，已清除{direction}的迁移进度")
+                                    print(f"已设置{direction}迁移起始时间: {start_time}")
+                                else:
+                                    print(f"{direction} 使用现有起始时间: {custom_start_time}")
+                            else:
+                                # 有迁移进度但没有自定义起始时间（旧版本数据），询问是否要设置
+                                print(f"{direction} 检测到旧版本迁移记录，建议设置起始时间")
+                                set_start_time = questionary.confirm(
+                                    f"是否要为 {direction} 设置起始时间？",
+                                    default=True
+                                ).ask()
+                                
+                                if set_start_time:
+                                    print(f"\n设置 {direction} 历史迁移起始时间")
+                                    start_time = select_migration_start_time(direction)
+                                    sync_engine.sync_manager.set_migration_start_time(direction, start_time)
+                                    print(f"已设置{direction}迁移起始时间: {start_time}")
+                                else:
+                                    print(f"{direction} 将使用默认行为继续迁移")
                     
                     print(f"\n将执行以下同步:")
                     mode_desc = "历史迁移" if sync_mode == "migration" else "增量同步"

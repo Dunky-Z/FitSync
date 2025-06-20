@@ -38,7 +38,8 @@ class GarminSyncClient:
                 email=garmin_config["username"],
                 password=garmin_config["password"],
                 auth_domain=garmin_config.get("auth_domain", "GLOBAL"),
-                config_manager=self.config_manager
+                config_manager=self.config_manager,
+                debug=self.debug
             )
             
             self.debug_print("Garmin客户端初始化成功")
