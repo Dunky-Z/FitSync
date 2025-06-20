@@ -9,6 +9,8 @@ from sync_manager import SyncManager, ActivityMetadata
 from activity_matcher import ActivityMatcher
 from strava_client import StravaClient
 from garmin_sync_client import GarminSyncClient
+from onedrive_client import OneDriveClient
+from file_converter import FileConverter
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +26,15 @@ class BidirectionalSync:
         self.activity_matcher = ActivityMatcher(debug)
         self.strava_client = StravaClient(config_manager, debug)
         self.garmin_client = GarminSyncClient(config_manager, debug)
+        self.onedrive_client = OneDriveClient(config_manager, debug)
+        self.file_converter = FileConverter()
         
         # 支持的同步方向
         self.sync_directions = [
             ("strava", "garmin"),
-            ("garmin", "strava")
+            ("garmin", "strava"),
+            ("strava", "onedrive"),
+            ("garmin", "onedrive")
         ]
     
     def debug_print(self, message: str) -> None:
@@ -84,11 +90,13 @@ class BidirectionalSync:
                 return result
             
             # 获取同步时间窗口
-            start_time, end_time = self.sync_manager.get_sync_window(source_platform, migration_mode=migration_mode)
+            start_time, end_time = self.sync_manager.get_sync_window(
+                source_platform, migration_mode=migration_mode, sync_direction=direction
+            )
             
             # 检查历史迁移是否已完成
-            if migration_mode and self.sync_manager.is_migration_complete(source_platform):
-                print(f"{source_platform}历史迁移已完成")
+            if migration_mode and self.sync_manager.is_migration_complete(source_platform, direction):
+                print(f"{direction}历史迁移已完成")
                 return result
             
             # 获取源平台活动
@@ -143,8 +151,8 @@ class BidirectionalSync:
             
             # 更新同步进度
             if migration_mode and latest_activity_time:
-                self.sync_manager.update_migration_progress(source_platform, latest_activity_time)
-                print(f"更新{source_platform}迁移进度到: {latest_activity_time}")
+                self.sync_manager.update_migration_progress(source_platform, latest_activity_time, direction)
+                print(f"更新{direction}迁移进度到: {latest_activity_time}")
             else:
                 # 非迁移模式，更新最后同步时间
                 self.sync_manager.update_last_sync_time(source_platform)
@@ -282,11 +290,88 @@ class BidirectionalSync:
                 return False
             elif platform == "garmin":
                 return self.garmin_client.upload_file(file_path)
+            elif platform == "onedrive":
+                return self._upload_to_onedrive(file_path)
             else:
                 return False
                 
         except Exception as e:
             logger.error(f"上传到{platform}失败: {e}")
+            return False
+    
+    def _upload_to_onedrive(self, file_path: str) -> bool:
+        """上传文件到OneDrive的Fog of World Import目录
+        
+        如果是FIT文件，会同时生成GPX文件并上传两种格式
+        """
+        try:
+            # 使用Fog of World的导入目录
+            onedrive_path = "/Apps/Fog of World/Import"
+            
+            self.debug_print(f"正在上传文件到OneDrive: {onedrive_path}")
+            
+            # 检查OneDrive连接
+            if not self.onedrive_client.test_connection():
+                self.debug_print("OneDrive连接失败")
+                return False
+            
+            # 获取文件信息
+            file_name = os.path.basename(file_path)
+            file_ext = os.path.splitext(file_name)[1].lower()
+            
+            upload_success = True
+            
+            # 上传原始文件
+            success = self.onedrive_client.upload_file(file_path, onedrive_path)
+            if success:
+                self.debug_print(f"原始文件 {file_name} 已成功上传到OneDrive")
+            else:
+                self.debug_print(f"原始文件 {file_name} 上传失败")
+                upload_success = False
+            
+            # 如果是FIT文件，同时生成并上传GPX文件
+            if file_ext == '.fit':
+                try:
+                    self.debug_print("检测到FIT文件，开始生成GPX文件...")
+                    
+                    # 生成GPX文件路径
+                    gpx_file_path = file_path.replace('.fit', '.gpx')
+                    
+                    # 转换FIT到GPX
+                    converted_gpx = self.file_converter.convert_file(file_path, 'gpx', gpx_file_path)
+                    
+                    if converted_gpx and os.path.exists(converted_gpx):
+                        self.debug_print(f"FIT文件已转换为GPX: {converted_gpx}")
+                        
+                        # 上传GPX文件
+                        gpx_success = self.onedrive_client.upload_file(converted_gpx, onedrive_path)
+                        
+                        if gpx_success:
+                            gpx_file_name = os.path.basename(converted_gpx)
+                            self.debug_print(f"GPX文件 {gpx_file_name} 已成功上传到OneDrive")
+                        else:
+                            self.debug_print(f"GPX文件上传失败")
+                            # GPX上传失败不影响整体成功状态，因为原始FIT文件已上传
+                        
+                        # 清理临时GPX文件
+                        try:
+                            if os.path.exists(converted_gpx):
+                                os.remove(converted_gpx)
+                                self.debug_print(f"已清理临时GPX文件: {converted_gpx}")
+                        except Exception as cleanup_e:
+                            logger.warning(f"清理临时GPX文件失败: {cleanup_e}")
+                    
+                    else:
+                        self.debug_print("FIT到GPX转换失败，只上传原始FIT文件")
+                        
+                except Exception as convert_e:
+                    logger.warning(f"FIT到GPX转换过程出错: {convert_e}")
+                    self.debug_print("FIT转换出错，但原始文件已上传成功")
+            
+            return upload_success
+                
+        except Exception as e:
+            logger.error(f"OneDrive上传失败: {e}")
             return False
     
     def _check_api_limits(self, platform: str) -> bool:

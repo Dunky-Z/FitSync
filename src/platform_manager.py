@@ -4,6 +4,7 @@ from config_manager import ConfigManager
 from strava_client import StravaClient
 from igpsport_client import IGPSportClient
 from garmin_client_wrapper import GarminClientWrapper
+from onedrive_client import OneDriveClient
 
 logger = logging.getLogger(__name__)
 
@@ -18,16 +19,19 @@ class PlatformManager:
         self.strava_client = StravaClient(config_manager, debug)
         self.igpsport_client = IGPSportClient(config_manager, debug)
         self.garmin_client = GarminClientWrapper(config_manager, debug)
+        self.onedrive_client = OneDriveClient(config_manager, debug)
         
         # 平台映射
         self.platform_clients = {
             "igpsport": self.igpsport_client,
-            "garmin": self.garmin_client
+            "garmin": self.garmin_client,
+            "onedrive": self.onedrive_client
         }
         
         self.platform_names = {
             "igpsport": "IGPSport",
-            "garmin": "Garmin Connect"
+            "garmin": "Garmin Connect",
+            "onedrive": "OneDrive"
         }
     
     def upload_to_platforms(self, file_path: str, platforms: List[str]) -> Dict[str, List[str]]:
@@ -68,4 +72,8 @@ class PlatformManager:
     
     def get_strava_client(self) -> StravaClient:
         """获取Strava客户端"""
-        return self.strava_client 
+        return self.strava_client
+    
+    def get_onedrive_client(self) -> OneDriveClient:
+        """获取OneDrive客户端"""
+        return self.onedrive_client 

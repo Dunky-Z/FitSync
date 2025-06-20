@@ -108,37 +108,69 @@ class SyncManager:
         """更新同步状态"""
         self.db_manager.update_sync_status(fingerprint, source_platform, target_platform, status)
     
-    def get_sync_window(self, platform: str, max_days: int = 30, migration_mode: bool = True) -> Tuple[datetime, datetime]:
+    def get_sync_window(self, platform: str, max_days: int = 30, migration_mode: bool = True, 
+                       sync_direction: str = None) -> Tuple[datetime, datetime]:
         """获取同步时间窗口
         
         Args:
             platform: 平台名称
             max_days: 最大天数（仅在非迁移模式下使用）
             migration_mode: 是否为历史迁移模式
+            sync_direction: 同步方向，格式为"source_to_target"
         """
         if migration_mode:
-            return self._get_migration_window(platform)
+            return self._get_migration_window(platform, sync_direction)
         else:
             return self._get_incremental_window(platform, max_days)
     
-    def _get_migration_window(self, platform: str) -> Tuple[datetime, datetime]:
+    def _get_migration_window(self, platform: str, sync_direction: str = None) -> Tuple[datetime, datetime]:
         """获取历史迁移模式的时间窗口"""
-        # 获取迁移进度
-        migration_progress = self.db_manager.get_sync_config(f'migration_progress_{platform}')
-        
-        if not migration_progress:
-            # 首次迁移：从很久以前开始（比如2008年Strava成立）
-            start_time = datetime(2008, 1, 1, tzinfo=timezone.utc)
-            self.debug_print(f"{platform}首次历史迁移，从{start_time}开始")
+        # 如果有同步方向，使用方向特定的进度；否则使用平台进度（向后兼容）
+        if sync_direction:
+            progress_key = f'migration_progress_{sync_direction}'
         else:
-            # 继续迁移：从上次迁移进度开始
-            start_time = datetime.fromisoformat(migration_progress)
-            self.debug_print(f"{platform}继续历史迁移，从{start_time}开始")
+            progress_key = f'migration_progress_{platform}'
+        
+        # 获取迁移进度
+        migration_progress = self.db_manager.get_sync_config(progress_key)
+        
+        # 检查是否有用户设置的起始时间
+        if sync_direction:
+            start_time_key = f'migration_start_time_{sync_direction}'
+            custom_start_time = self.db_manager.get_sync_config(start_time_key)
+            
+            if not migration_progress and custom_start_time:
+                # 首次迁移且有自定义起始时间
+                start_time = datetime.fromisoformat(custom_start_time)
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=timezone.utc)
+                self.debug_print(f"{sync_direction}首次历史迁移，使用自定义起始时间: {start_time}")
+            elif migration_progress:
+                # 继续迁移：从上次迁移进度开始
+                start_time = datetime.fromisoformat(migration_progress)
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=timezone.utc)
+                self.debug_print(f"{sync_direction}继续历史迁移，从{start_time}开始")
+            else:
+                # 首次迁移且无自定义起始时间：使用默认时间
+                start_time = datetime(2008, 1, 1, tzinfo=timezone.utc)
+                self.debug_print(f"{sync_direction}首次历史迁移，使用默认起始时间: {start_time}")
+        else:
+            # 向后兼容：原有逻辑
+            if not migration_progress:
+                start_time = datetime(2008, 1, 1, tzinfo=timezone.utc)
+                self.debug_print(f"{platform}首次历史迁移，从{start_time}开始")
+            else:
+                start_time = datetime.fromisoformat(migration_progress)
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=timezone.utc)
+                self.debug_print(f"{platform}继续历史迁移，从{start_time}开始")
         
         # 结束时间：现在
         end_time = datetime.now(timezone.utc)
         
-        self.debug_print(f"{platform}历史迁移时间窗口: {start_time} - {end_time}")
+        direction_or_platform = sync_direction or platform
+        self.debug_print(f"{direction_or_platform}历史迁移时间窗口: {start_time} - {end_time}")
         return start_time, end_time
     
     def _get_incremental_window(self, platform: str, max_days: int) -> Tuple[datetime, datetime]:
@@ -178,14 +210,34 @@ class SyncManager:
         
         return start_time, now
     
-    def update_migration_progress(self, platform: str, latest_activity_time: datetime) -> None:
-        """更新历史迁移进度"""
-        self.db_manager.set_sync_config(f'migration_progress_{platform}', latest_activity_time.isoformat())
-        self.debug_print(f"更新{platform}迁移进度到: {latest_activity_time}")
+    def set_migration_start_time(self, sync_direction: str, start_time: str) -> None:
+        """设置历史迁移的起始时间"""
+        self.db_manager.set_sync_config(f'migration_start_time_{sync_direction}', start_time)
+        self.debug_print(f"设置{sync_direction}迁移起始时间: {start_time}")
     
-    def get_migration_progress(self, platform: str) -> Optional[datetime]:
+    def update_migration_progress(self, platform_or_direction: str, latest_activity_time: datetime, 
+                                 sync_direction: str = None) -> None:
+        """更新历史迁移进度"""
+        # 如果提供了sync_direction，使用方向特定的进度；否则使用平台进度（向后兼容）
+        if sync_direction:
+            progress_key = f'migration_progress_{sync_direction}'
+        else:
+            progress_key = f'migration_progress_{platform_or_direction}'
+        
+        self.db_manager.set_sync_config(progress_key, latest_activity_time.isoformat())
+        
+        direction_or_platform = sync_direction or platform_or_direction
+        self.debug_print(f"更新{direction_or_platform}迁移进度到: {latest_activity_time}")
+    
+    def get_migration_progress(self, platform_or_direction: str, sync_direction: str = None) -> Optional[datetime]:
         """获取历史迁移进度"""
-        progress_str = self.db_manager.get_sync_config(f'migration_progress_{platform}')
+        # 如果提供了sync_direction，使用方向特定的进度；否则使用平台进度（向后兼容）
+        if sync_direction:
+            progress_key = f'migration_progress_{sync_direction}'
+        else:
+            progress_key = f'migration_progress_{platform_or_direction}'
+        
+        progress_str = self.db_manager.get_sync_config(progress_key)
         if progress_str:
             progress = datetime.fromisoformat(progress_str)
             # 确保有时区信息
@@ -194,9 +246,9 @@ class SyncManager:
             return progress
         return None
     
-    def is_migration_complete(self, platform: str) -> bool:
+    def is_migration_complete(self, platform_or_direction: str, sync_direction: str = None) -> bool:
         """检查历史迁移是否完成"""
-        progress = self.get_migration_progress(platform)
+        progress = self.get_migration_progress(platform_or_direction, sync_direction)
         if not progress:
             return False
         

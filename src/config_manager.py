@@ -38,6 +38,14 @@ class ConfigManager:
                 "oauth_token": "",
                 "oauth_token_secret": ""
             },
+            "onedrive": {
+                "client_id": "your_client_id_here",
+                "client_secret": "your_client_secret_here",
+                "redirect_uri": "http://localhost",
+                "refresh_token": "",
+                "access_token": "",
+                "tenant_id": "common"
+            },
             "general": {
                 "debug_mode": False,
                 "auto_save_credentials": True
@@ -135,5 +143,9 @@ class ConfigManager:
                        (config.get("username") and config.get("password")))
         elif platform == "garmin":
             return bool(config.get("username") and config.get("password"))
+        elif platform == "onedrive":
+            return (config.get("client_id") != "your_client_id_here" and 
+                   config.get("client_secret") != "your_client_secret_here" and
+                   config.get("refresh_token"))
         
         return False 

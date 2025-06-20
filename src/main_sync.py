@@ -78,10 +78,50 @@ def select_sync_directions() -> list:
         "选择要执行的同步方向:",
         choices=[
             {"name": "Strava -> Garmin", "value": "strava_to_garmin", "checked": False},
-            {"name": "Garmin -> Strava", "value": "garmin_to_strava", "checked": False}
+            {"name": "Garmin -> Strava", "value": "garmin_to_strava", "checked": False},
+            {"name": "Strava -> OneDrive", "value": "strava_to_onedrive", "checked": False},
+            {"name": "Garmin -> OneDrive", "value": "garmin_to_onedrive", "checked": False}
         ],
         instruction="(使用空格键选择，回车键确认)"
     ).ask()
+
+
+def select_migration_start_time(sync_direction: str) -> str:
+    """选择历史迁移的起始时间"""
+    import questionary
+    from datetime import datetime, timedelta
+    
+    # 预设选项
+    now = datetime.now()
+    options = [
+        {"name": "1年前", "value": (now - timedelta(days=365)).strftime("%Y-%m-%d")},
+        {"name": "2年前", "value": (now - timedelta(days=730)).strftime("%Y-%m-%d")},
+        {"name": "3年前", "value": (now - timedelta(days=1095)).strftime("%Y-%m-%d")},
+        {"name": "5年前", "value": (now - timedelta(days=1825)).strftime("%Y-%m-%d")},
+        {"name": "自定义时间", "value": "custom"}
+    ]
+    
+    choice = questionary.select(
+        f"选择{sync_direction}迁移的起始时间:",
+        choices=options,
+        instruction="(选择从什么时间开始迁移历史数据)"
+    ).ask()
+    
+    if choice == "custom":
+        while True:
+            custom_date = questionary.text(
+                "请输入自定义起始日期 (格式: YYYY-MM-DD):",
+                default=(now - timedelta(days=1095)).strftime("%Y-%m-%d")
+            ).ask()
+            
+            try:
+                # 验证日期格式
+                datetime.strptime(custom_date, "%Y-%m-%d")
+                return custom_date
+            except ValueError:
+                print("日期格式无效，请使用 YYYY-MM-DD 格式")
+    
+    return choice
 
 
 def select_batch_size(migration_mode: bool = True) -> int:
@@ -185,22 +225,47 @@ def clear_garmin_session(sync_engine: BidirectionalSync) -> None:
     sync_engine.clear_garmin_session()
 
 
-def check_prerequisites(sync_engine: BidirectionalSync) -> bool:
+def check_prerequisites(sync_engine: BidirectionalSync, directions: list = None) -> bool:
     """检查同步前提条件"""
     print("检查同步前提条件...")
     
+    if not directions:
+        directions = []
+    
     issues = []
+    required_platforms = set()
     
-    # 检查Strava配置
-    if not sync_engine.strava_client.is_configured():
-        issues.append("Strava API未配置")
+    # 根据同步方向确定需要检查的平台
+    for direction in directions:
+        if "_to_" in direction:
+            source, target = direction.split("_to_")
+            required_platforms.add(source)
+            required_platforms.add(target)
     
-    # 检查Garmin配置
-    try:
-        if not sync_engine.garmin_client.test_connection():
-            issues.append("Garmin Connect连接失败")
-    except Exception as e:
-        issues.append(f"Garmin Connect配置问题: {e}")
+    # 检查Strava配置（如果需要）
+    if "strava" in required_platforms:
+        if not sync_engine.strava_client.is_configured():
+            issues.append("Strava API未配置")
+    
+    # 检查Garmin配置（如果需要）
+    if "garmin" in required_platforms:
+        try:
+            print("检查Garmin登录状态...")
+            if not sync_engine.garmin_client.test_connection():
+                issues.append("Garmin Connect连接失败")
+        except Exception as e:
+            issues.append(f"Garmin Connect配置问题: {e}")
+    
+    # 检查OneDrive配置（如果需要）
+    if "onedrive" in required_platforms:
+        try:
+            print("检查OneDrive连接状态...")
+            if not sync_engine.config_manager.is_platform_configured("onedrive"):
+                issues.append("OneDrive未配置")
+            elif not sync_engine.onedrive_client.test_connection():
+                issues.append("OneDrive连接失败")
+        except Exception as e:
+            issues.append(f"OneDrive配置问题: {e}")
     
     if issues:
         print("\n发现以下问题:")
@@ -209,8 +274,12 @@ def check_prerequisites(sync_engine: BidirectionalSync) -> bool:
         
         print("\n请先解决这些问题再进行同步。")
         print("参考配置文档:")
-        print("  - Strava API: STRAVA_API_SETUP.md")
-        print("  - Garmin Connect: GARMIN_CONNECT_SETUP.md")
+        if "strava" in required_platforms:
+            print("  - Strava API: STRAVA_API_SETUP.md")
+        if "garmin" in required_platforms:
+            print("  - Garmin Connect: GARMIN_CONNECT_SETUP.md")
+        if "onedrive" in required_platforms:
+            print("  - OneDrive: 已配置，如有问题请检查访问令牌")
         
         return False
     
@@ -226,7 +295,7 @@ def main():
     parser.add_argument('--debug', action='store_true', help='启用调试模式，显示详细信息')
     parser.add_argument('--auto', action='store_true', help='自动模式，使用默认设置直接同步')
     parser.add_argument('--directions', nargs='+', 
-                       choices=['strava_to_garmin', 'garmin_to_strava'],
+                       choices=['strava_to_garmin', 'garmin_to_strava', 'strava_to_onedrive', 'garmin_to_onedrive'],
                        help='指定同步方向')
     parser.add_argument('--batch-size', type=int, default=10, help='批处理大小')
     args = parser.parse_args()
@@ -247,11 +316,11 @@ def main():
         if args.auto:
             print("\n自动同步模式")
             
-            if not check_prerequisites(sync_engine):
-                return
-            
             directions = args.directions or ["strava_to_garmin", "garmin_to_strava"]
             batch_size = args.batch_size
+            
+            if not check_prerequisites(sync_engine, directions):
+                return
             
             print(f"同步方向: {', '.join(directions)}")
             print(f"批处理大小: {batch_size}")
@@ -271,10 +340,6 @@ def main():
                 elif action == "sync":
                     print("\n准备开始双向同步...")
                     
-                    # 检查前提条件
-                    if not check_prerequisites(sync_engine):
-                        continue
-                    
                     # 选择同步模式
                     sync_mode = select_sync_mode()
                     
@@ -285,8 +350,23 @@ def main():
                         print("未选择任何同步方向")
                         continue
                     
+                    # 检查前提条件
+                    if not check_prerequisites(sync_engine, directions):
+                        continue
+                    
                     # 获取批处理大小
                     batch_size = select_batch_size(sync_mode == "migration")
+                    
+                    # 如果是历史迁移模式，检查是否需要设置起始时间
+                    if sync_mode == "migration":
+                        for direction in directions:
+                            # 检查是否已有迁移进度
+                            progress = sync_engine.sync_manager.get_migration_progress("", direction)
+                            if not progress:
+                                # 首次迁移，让用户选择起始时间
+                                start_time = select_migration_start_time(direction)
+                                sync_engine.sync_manager.set_migration_start_time(direction, start_time)
+                                print(f"已设置{direction}迁移起始时间: {start_time}")
                     
                     print(f"\n将执行以下同步:")
                     mode_desc = "历史迁移" if sync_mode == "migration" else "增量同步"
@@ -296,7 +376,7 @@ def main():
                     
                     if sync_mode == "migration":
                         print("\n⚠️  历史迁移模式说明:")
-                        print("- 将从最老的活动开始，逐步迁移所有历史数据")
+                        print("- 将从设定的起始时间开始，逐步迁移历史数据")
                         print("- 每次运行只处理指定数量的活动")
                         print("- 可以多次运行，自动从上次停止的地方继续")
                         print("- 建议先用调试模式（10个活动）验证功能")
