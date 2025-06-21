@@ -371,8 +371,16 @@ def main():
                                 sync_engine.sync_manager.set_migration_start_time(direction, start_time)
                                 print(f"已设置{direction}迁移起始时间: {start_time}")
                             elif custom_start_time:
-                                # 已有自定义起始时间，询问是否要重新设置
-                                print(f"{direction} 当前起始时间: {custom_start_time}")
+                                # 已有自定义起始时间，显示当前状态
+                                if progress:
+                                    print(f"{direction} 迁移状态:")
+                                    print(f"  初始起始时间: {custom_start_time}")
+                                    print(f"  当前迁移进度: {progress}")
+                                    print(f"  下次将从进度时间继续迁移")
+                                else:
+                                    print(f"{direction} 当前起始时间: {custom_start_time}")
+                                    print(f"  尚未开始迁移，将从起始时间开始")
+                                
                                 reset_start_time = questionary.confirm(
                                     f"是否要重新设置 {direction} 的起始时间？",
                                     default=False
