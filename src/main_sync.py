@@ -250,9 +250,12 @@ def check_prerequisites(sync_engine: BidirectionalSync, directions: list = None)
     # 检查Garmin配置（如果需要）
     if "garmin" in required_platforms:
         try:
-            print("检查Garmin登录状态...")
-            if not sync_engine.garmin_client.test_connection():
-                issues.append("Garmin Connect连接失败")
+            print("检查Garmin配置...")
+            garmin_config = sync_engine.config_manager.get_platform_config("garmin")
+            if not garmin_config.get("username") or not garmin_config.get("password"):
+                issues.append("Garmin Connect配置不完整")
+            else:
+                print("Garmin配置检查通过，连接将在同步时建立")
         except Exception as e:
             issues.append(f"Garmin Connect配置问题: {e}")
     

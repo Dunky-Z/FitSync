@@ -16,24 +16,29 @@ class GarminSyncClient:
         self.config_manager = config_manager
         self.debug = debug
         self.client = None
+        self._initialized = False
         
-        # 初始化Garmin客户端
-        self._initialize_client()
+        # 不在初始化时立即创建Garmin客户端，改为延迟初始化
     
     def debug_print(self, message: str) -> None:
         """只在调试模式下打印信息"""
         if self.debug:
             print(f"[GarminSyncClient] {message}")
     
-    def _initialize_client(self) -> None:
-        """初始化Garmin客户端"""
+    def _ensure_client_initialized(self) -> bool:
+        """确保Garmin客户端已初始化（延迟初始化）"""
+        if self._initialized:
+            return self.client is not None
+        
         try:
             garmin_config = self.config_manager.get_platform_config("garmin")
             
             if not garmin_config.get("username") or not garmin_config.get("password"):
-                self.debug_print("Garmin配置不完整")
-                return
+                self.debug_print("Garmin配置不完整，无法初始化客户端")
+                self._initialized = True
+                return False
             
+            self.debug_print("开始初始化Garmin客户端...")
             self.client = GarminClient(
                 email=garmin_config["username"],
                 password=garmin_config["password"],
@@ -43,14 +48,18 @@ class GarminSyncClient:
             )
             
             self.debug_print("Garmin客户端初始化成功")
+            self._initialized = True
+            return True
             
         except Exception as e:
             logger.error(f"初始化Garmin客户端失败: {e}")
             self.client = None
+            self._initialized = True
+            return False
     
     def test_connection(self) -> bool:
         """测试Garmin连接"""
-        if not self.client:
+        if not self._ensure_client_initialized():
             return False
         
         try:
@@ -64,8 +73,8 @@ class GarminSyncClient:
     def get_activities(self, limit: int = 10, after: Optional[datetime] = None, 
                       before: Optional[datetime] = None) -> List[Dict]:
         """获取Garmin活动列表"""
-        if not self.client:
-            self.debug_print("Garmin客户端未初始化")
+        if not self._ensure_client_initialized():
+            self.debug_print("Garmin客户端初始化失败")
             return []
         
         try:
@@ -166,8 +175,8 @@ class GarminSyncClient:
     
     def download_activity_file(self, activity_id: str, output_path: str) -> bool:
         """下载活动文件"""
-        if not self.client:
-            self.debug_print("Garmin客户端未初始化")
+        if not self._ensure_client_initialized():
+            self.debug_print("Garmin客户端初始化失败")
             return False
         
         try:
@@ -197,8 +206,8 @@ class GarminSyncClient:
     
     def upload_file(self, file_path: str) -> bool:
         """上传文件到Garmin"""
-        if not self.client:
-            self.debug_print("Garmin客户端未初始化")
+        if not self._ensure_client_initialized():
+            self.debug_print("Garmin客户端初始化失败")
             return False
         
         try:
