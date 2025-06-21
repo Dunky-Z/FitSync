@@ -152,3 +152,23 @@ curl -X POST https://login.live.com/oauth20_token.srf \
 ```
 
 返回值中就有我们需要的refresh_token，保存到本地。
+
+# 配置文件
+
+在项目根目录下创建`.app_config.json`文件，内容如下：
+
+```json
+{
+  "onedrive": {
+    "client_id": "YOUR_CLIENT_ID",
+    "client_secret": "YOUR_CLIENT_SECRET",
+    "redirect_uri": "http://localhost",
+    "refresh_token": "YOUR_REFRESH_TOKEN",
+    "access_token": "YOUR_ACCESS_TOKEN",
+    "tenant_id": "common",
+    "expires_in": 3600
+  }
+}
+```
+
+将其中的值替换为申请得到的值。
