@@ -4,10 +4,12 @@ import uuid
 import logging
 import requests
 import oss2
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional, List
+from datetime import datetime
 
 from config_manager import ConfigManager
 from ui_utils import UIUtils
+from database_manager import ActivityMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +23,58 @@ class IGPSportClient:
     def debug_print(self, message: str) -> None:
         """只在调试模式下打印信息"""
         if self.debug:
-            print(message)
+            print(f"[IGPSportClient] {message}")
+    
+    def is_configured(self) -> bool:
+        """检查IGPSport是否已配置"""
+        config = self.config_manager.get_platform_config("igpsport")
+        return bool(config.get("login_token") or 
+                   (config.get("username") and config.get("password")))
+    
+    def test_connection(self) -> bool:
+        """测试连接"""
+        try:
+            # 尝试使用已保存的token
+            saved_token = self._get_saved_token()
+            if saved_token:
+                return self.test_token(saved_token)
+            
+            # 如果没有token，尝试获取凭据
+            if self.is_configured():
+                config = self.config_manager.get_platform_config("igpsport")
+                username = config.get("username")
+                password = config.get("password")
+                if username and password:
+                    token = self.login(username, password)
+                    return bool(token)
+            
+            return False
+        except Exception as e:
+            self.debug_print(f"连接测试失败: {e}")
+            return False
+    
+    def get_activities(self, limit: int = 30, 
+                      after: Optional[datetime] = None,
+                      before: Optional[datetime] = None) -> List[Dict]:
+        """获取IGPSport活动列表（注意：IGPSport主要用于上传，不提供活动获取）"""
+        self.debug_print("IGPSport主要用于上传活动，不支持获取活动列表")
+        return []
+    
+    def convert_to_activity_metadata(self, activity_data: Dict) -> ActivityMetadata:
+        """将IGPSport活动数据转换为ActivityMetadata（IGPSport主要用于上传）"""
+        return ActivityMetadata(
+            name=activity_data.get("name", "IGPSport活动"),
+            sport_type=activity_data.get("sport_type", "unknown"),
+            start_time=activity_data.get("start_time", ""),
+            distance=float(activity_data.get("distance", 0)),
+            duration=int(activity_data.get("duration", 0)),
+            elevation_gain=float(activity_data.get("elevation_gain", 0))
+        )
+    
+    def download_activity_file(self, activity_id: str, output_path: str) -> bool:
+        """下载活动文件（IGPSport主要用于上传，不支持下载）"""
+        self.debug_print("IGPSport主要用于上传活动，不支持下载活动文件")
+        return False
     
     def get_credentials(self) -> Tuple[str, str]:
         """获取IGPSport登录凭据"""
@@ -49,7 +102,7 @@ class IGPSportClient:
     
     def login(self, username: str, password: str) -> str:
         """登录IGPSport并获取token"""
-        print("正在登录IGPSport...")
+        self.debug_print("正在登录IGPSport...")
         
         session = requests.Session()
         
@@ -80,8 +133,8 @@ class IGPSportClient:
                 # 提取登录token
                 for cookie in session.cookies:
                     if cookie.name == 'loginToken':
-                        print("IGPSport登录成功")
-                        # 保存cookie供下次使用
+                        self.debug_print("IGPSport登录成功")
+                        # 保存token供下次使用
                         self._save_token(cookie.value)
                         return cookie.value
                 
@@ -90,11 +143,11 @@ class IGPSportClient:
                     if response.text:
                         result = response.json()
                         if 'token' in result:
-                            print("IGPSport登录成功")
+                            self.debug_print("IGPSport登录成功")
                             self._save_token(result['token'])
                             return result['token']
                         elif 'data' in result and 'token' in result['data']:
-                            print("IGPSport登录成功")
+                            self.debug_print("IGPSport登录成功")
                             self._save_token(result['data']['token'])
                             return result['data']['token']
                 except Exception as e:
@@ -107,23 +160,22 @@ class IGPSportClient:
         
         # 如果还是失败，提供一个选项让用户手动输入token
         manual_token = UIUtils.ask_manual_token("IGPSport loginToken")
-
         if manual_token:
-            print("使用手动输入的Token")
+            self.debug_print("使用手动输入的Token")
             self._save_token(manual_token.strip())
             return manual_token.strip()
         
         raise ValueError("IGPSport登录失败，请检查用户名和密码")
     
     def _save_token(self, token: str) -> None:
-        """保存IGPSport token"""
+        """保存token到配置"""
         config = self.config_manager.get_platform_config("igpsport")
-        config["login_token"] = token.strip()
+        config["login_token"] = token
         self.config_manager.save_platform_config("igpsport", config)
-        self.debug_print("IGPSport Token已保存，下次运行时将自动使用")
+        self.debug_print("IGPSport Token已保存")
     
     def _get_saved_token(self) -> str:
-        """获取已保存的IGPSport token"""
+        """获取已保存的token"""
         config = self.config_manager.get_platform_config("igpsport")
         return config.get("login_token", "")
     
@@ -221,7 +273,7 @@ class IGPSportClient:
             self.debug_print(f"ETag: {result.etag}")
             
             if result.status == 200:
-                print("文件上传成功")
+                self.debug_print("文件上传成功")
                 
                 # 验证文件是否真的上传成功
                 if bucket.object_exists(oss_name):
@@ -250,7 +302,7 @@ class IGPSportClient:
     
     def notify_server(self, login_token: str, file_name: str, oss_name: str) -> None:
         """通知IGPSport服务器文件已上传"""
-        print("通知IGPSport服务器...")
+        self.debug_print("通知IGPSport服务器...")
         
         url = "https://prod.zh.igpsport.com/service/web-gateway/web-analyze/activity/uploadByOss"
         
@@ -266,31 +318,32 @@ class IGPSportClient:
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
         }
         
-        print(f"通知URL: {url}")
-        print(f"发送数据: {data}")
-        print(f"使用Token: {login_token[:20]}...")
+        self.debug_print(f"通知URL: {url}")
+        self.debug_print(f"发送数据: {data}")
+        self.debug_print(f"使用Token: {login_token[:20]}...")
         
         response = requests.post(url, json=data, headers=headers)
         
-        print(f"通知响应状态码: {response.status_code}")
-        print(f"响应头: {dict(response.headers)}")
-        print(f"响应内容: {response.text}")
+        self.debug_print(f"通知响应状态码: {response.status_code}")
+        self.debug_print(f"响应头: {dict(response.headers)}")
+        self.debug_print(f"响应内容: {response.text}")
         
         if response.status_code == 200:
             try:
                 result = response.json()
-                print(f"解析后的响应: {result}")
-                print("IGPSport上传通知成功")
+                self.debug_print(f"解析后的响应: {result}")
+                self.debug_print("IGPSport上传通知成功")
             except:
-                print("IGPSport上传通知成功（无JSON响应）")
+                self.debug_print("IGPSport上传通知成功（无JSON响应）")
         else:
-            print(f"IGPSport通知失败 (状态码: {response.status_code})")
-            print(f"可能的错误原因：")
-            print(f"   - Token已过期")
-            print(f"   - OSS文件名无效")
-            print(f"   - 服务器内部错误")
+            self.debug_print(f"IGPSport通知失败 (状态码: {response.status_code})")
+            self.debug_print(f"可能的错误原因：")
+            self.debug_print(f"   - Token已过期")
+            self.debug_print(f"   - OSS文件名无效")
+            self.debug_print(f"   - 服务器内部错误")
+            raise Exception(f"IGPSport通知失败: {response.status_code}")
     
-    def upload_file(self, file_path: str) -> None:
+    def upload_file(self, file_path: str, activity_name: str = None) -> bool:
         """完整的IGPSport上传流程"""
         try:
             # 1. 首先尝试使用保存的token
@@ -298,12 +351,12 @@ class IGPSportClient:
             login_token = None
             
             if saved_token:
-                print("使用已保存的IGPSport Token进行认证...")
+                self.debug_print("使用已保存的IGPSport Token进行认证...")
                 if self.test_token(saved_token):
-                    print("IGPSport Token有效，跳过登录")
+                    self.debug_print("IGPSport Token有效，跳过登录")
                     login_token = saved_token
                 else:
-                    print("保存的IGPSport Token已过期，需要重新登录...")
+                    self.debug_print("保存的IGPSport Token已过期，需要重新登录...")
             
             # 2. 如果没有有效的token，进行登录
             if not login_token:
@@ -314,15 +367,27 @@ class IGPSportClient:
             oss_credentials = self.get_oss_token(login_token)
             
             # 4. 上传文件到OSS
-            file_name = os.path.basename(file_path)
+            # 使用原活动名称，如果没有提供则使用文件名
+            if activity_name:
+                # 清理活动名称，移除不合法字符，并添加文件扩展名
+                import re
+                clean_name = re.sub(r'[<>:"/\\|?*]', '_', activity_name)
+                file_ext = os.path.splitext(file_path)[1]  # 获取原文件扩展名
+                file_name = f"{clean_name}{file_ext}"
+                self.debug_print(f"使用原活动名称: {activity_name} -> {file_name}")
+            else:
+                file_name = os.path.basename(file_path)
+                self.debug_print(f"使用文件名: {file_name}")
+            
             oss_name = self.upload_to_oss(file_path, oss_credentials)
             
             # 5. 通知IGPSport
             self.notify_server(login_token, file_name, oss_name)
             
-            print(f"\n文件 {file_name} 已成功上传到IGPSport！")
+            self.debug_print(f"文件 {file_name} 已成功上传到IGPSport！")
+            return True
             
         except Exception as e:
             logger.error(f"IGPSport上传失败: {e}")
-            print(f"上传失败: {e}")
-            raise 
+            self.debug_print(f"上传失败: {e}")
+            return False 

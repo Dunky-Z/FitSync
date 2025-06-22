@@ -274,118 +274,208 @@ class StravaClient:
         # 直接使用Cookie认证下载
         return self._download_with_cookie(url, activity_id, activity_name)
     
+    def _is_manual_activity(self, activity_data: Dict) -> bool:
+        """检查活动是否为手动创建（没有原始文件）"""
+        try:
+            # 检查活动是否有设备信息
+            device_name = activity_data.get('device_name')
+            upload_id = activity_data.get('upload_id')
+            external_id = activity_data.get('external_id')
+            
+            # 手动创建的活动通常没有这些字段或者为空
+            has_device = device_name and device_name.strip()
+            has_upload_id = upload_id is not None
+            has_external_id = external_id and external_id.strip()
+            
+            # 检查是否有GPS数据
+            has_start_latlng = activity_data.get('start_latlng') is not None
+            has_map = activity_data.get('map', {}).get('polyline') is not None
+            
+            # 手动活动的判断逻辑：
+            # 1. 没有设备名称
+            # 2. 没有上传ID
+            # 3. 没有外部ID
+            # 4. 可能没有GPS数据
+            
+            is_manual = (not has_device and not has_upload_id and not has_external_id)
+            
+            if is_manual:
+                self.debug_print(f"检测到手动创建活动: {activity_data.get('name', 'Unknown')}")
+                self.debug_print(f"  - Device: {device_name}")
+                self.debug_print(f"  - Upload ID: {upload_id}")
+                self.debug_print(f"  - External ID: {external_id}")
+                self.debug_print(f"  - Has GPS: {has_start_latlng or has_map}")
+            
+            return is_manual
+            
+        except Exception as e:
+            self.debug_print(f"检查手动活动失败: {e}")
+            return False
+    
+    def _has_original_file(self, activity_data: Dict) -> bool:
+        """检查活动是否有原始文件可下载"""
+        # 如果是手动创建的活动，通常没有原始文件
+        if self._is_manual_activity(activity_data):
+            return False
+        
+        # 检查活动类型和数据源
+        activity_type = activity_data.get('type', '').lower()
+        device_name = activity_data.get('device_name', '').lower()
+        
+        # 某些活动类型更可能有原始文件
+        likely_has_file_types = [
+            'ride', 'run', 'swim', 'hike', 'walk', 'cycling', 
+            'running', 'swimming', 'hiking', 'walking'
+        ]
+        
+        # 某些设备名称表明有原始文件
+        device_indicators = [
+            'garmin', 'polar', 'suunto', 'wahoo', 'coros', 'fitbit',
+            'zwift', 'trainer', 'power', 'gps', 'watch'
+        ]
+        
+        has_likely_type = any(t in activity_type for t in likely_has_file_types)
+        has_device_indicator = any(d in device_name for d in device_indicators)
+        
+        # 如果有设备信息或者是常见的运动类型，可能有原始文件
+        return has_device_indicator or (has_likely_type and activity_data.get('upload_id') is not None)
+
     def download_activity_file(self, activity_id: str, save_path: str) -> bool:
-        """下载活动文件"""
+        """下载活动文件到指定路径"""
         try:
             self.debug_print(f"下载Strava活动文件: {activity_id}")
             
-            # 使用现有的下载逻辑
-            downloaded_file = self.download_file(activity_id)
+            # 首先获取活动详情，检查是否有原始文件
+            activity_details = self.get_activity_details(activity_id)
+            if activity_details:
+                if not self._has_original_file(activity_details):
+                    self.debug_print(f"活动 {activity_id} 是手动创建的活动，没有原始文件可下载")
+                    print(f"跳过手动创建的活动: {activity_details.get('name', activity_id)}")
+                    return False
             
-            if downloaded_file and os.path.exists(downloaded_file):
-                # 如果下载成功，移动文件到指定路径
-                import shutil
-                os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                shutil.move(downloaded_file, save_path)
-                self.debug_print(f"文件已下载到: {save_path}")
+            # 尝试下载原始文件
+            success, downloaded_file = self._try_download_with_cookie(
+                f"https://www.strava.com/activities/{activity_id}/export_original",
+                activity_id,
+                self.config_manager.get_platform_config("strava").get("cookie", ""),
+                activity_details.get('name') if activity_details else None
+            )
+            
+            if success and downloaded_file and os.path.exists(downloaded_file):
+                # 移动到指定路径
+                if downloaded_file != save_path:
+                    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                    os.rename(downloaded_file, save_path)
+                
+                self.debug_print(f"文件已保存到: {save_path}")
                 return True
             else:
-                self.debug_print("文件下载失败")
+                self.debug_print(f"下载活动文件失败: {activity_id}")
                 return False
                 
         except Exception as e:
-            self.debug_print(f"下载活动文件失败: {e}")
             logger.error(f"下载Strava活动文件失败: {e}")
+            self.debug_print(f"下载失败: {e}")
             return False
     
     def _download_with_cookie(self, url: str, activity_id: str, activity_name: Optional[str] = None) -> Optional[str]:
-        """使用Cookie进行认证下载"""
-        config = self.config_manager.get_platform_config("strava")
-        
-        # 首先尝试使用保存的Cookie
-        saved_cookie = config.get("cookie", "")
-        
-        if saved_cookie:
+        """使用Cookie下载活动文件"""
+        try:
+            config = self.config_manager.get_platform_config("strava")
+            cookie = config.get("cookie", "")
+            
+            if not cookie:
+                print("未找到Strava Cookie，请重新配置")
+                return None
+            
+            self.debug_print(f"活动名称: {activity_name}")
+            self.debug_print(f"下载URL: {url}")
             self.debug_print("使用已保存的Cookie进行下载...")
-            success, file_path = self._try_download_with_cookie(url, activity_id, saved_cookie, activity_name)
-            if success:
-                return file_path
-            else:
-                self.debug_print("保存的Cookie可能已过期，需要更新Cookie")
-        
-        # 如果没有保存的Cookie或Cookie已过期，提示用户输入新的Cookie
-        print("\n要获取Strava Cookie，请按以下步骤操作：")
-        print("1. 在浏览器中打开 https://www.strava.com 并登录")
-        print("2. 按F12打开开发者工具")
-        print("3. 转到 Network(网络) 标签")
-        print("4. 刷新页面")
-        print("5. 找到任意一个请求，在Request Headers中找到Cookie")
-        print("6. 复制完整的Cookie值")
-        
-        cookie_value = UIUtils.ask_manual_token("Strava Cookie")
-        
-        if not cookie_value:
-            print("未提供Cookie，无法下载文件")
-            raise ValueError("Cookie为空，无法继续")
-        
-        # 尝试使用新Cookie下载
-        success, file_path = self._try_download_with_cookie(url, activity_id, cookie_value, activity_name)
-        
-        if success:
-            # 保存Cookie供下次使用
-            config["cookie"] = cookie_value
-            self.config_manager.save_platform_config("strava", config)
-            return file_path
-        else:
-            print("Cookie无效或活动不可访问")
-            raise ValueError("下载失败")
+            
+            return self._try_download_with_cookie(url, activity_id, cookie, activity_name)
+            
+        except Exception as e:
+            logger.error(f"Cookie下载失败: {e}")
+            return None
     
     def _try_download_with_cookie(self, url: str, activity_id: str, cookie: str, 
                                   activity_name: Optional[str] = None) -> Tuple[bool, Optional[str]]:
         """尝试使用Cookie下载文件"""
+        headers = {
+            'Cookie': cookie,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Cookie': cookie.strip(),
-                'Referer': f'https://www.strava.com/activities/{activity_id}'
-            }
-            
-            self.debug_print(f"发送下载请求...")
+            self.debug_print("发送下载请求...")
             response = requests.get(url, headers=headers, timeout=30)
             
             self.debug_print(f"响应状态码: {response.status_code}")
-            self.debug_print(f"Content-Type: {response.headers.get('content-type', 'Unknown')}")
-            self.debug_print(f"Content-Length: {response.headers.get('content-length', 'Unknown')}")
+            self.debug_print(f"Content-Type: {response.headers.get('Content-Type', 'Unknown')}")
+            self.debug_print(f"Content-Length: {response.headers.get('Content-Length', 'Unknown')}")
             
             if response.status_code == 200:
-                content_type = response.headers.get('content-type', '').lower()
+                content_type = response.headers.get('Content-Type', '').lower()
                 
-                # 生成文件名
-                if activity_name:
-                    # 使用活动名生成文件名
-                    clean_name = FileUtils.sanitize_filename(activity_name)
-                    base_filename = f"{clean_name}_{activity_id}"
+                # 检查是否返回了HTML页面（表示没有原始文件）
+                if 'text/html' in content_type:
+                    self.debug_print("返回HTML页面，活动可能没有原始文件")
+                    
+                    # 检查响应内容确认是否为正常的Strava页面
+                    response_preview = response.text[:200] if response.text else ""
+                    self.debug_print(f"响应内容开头: {response_preview}")
+                    
+                    # 如果是正常的Strava页面（不是错误页面），说明活动没有原始文件
+                    if any(indicator in response.text.lower() for indicator in [
+                        'strava', 'activity', 'manual', '手动', 'no file', 'not available'
+                    ]):
+                        self.debug_print("确认为手动创建的活动，没有原始文件")
+                        print(f"活动 '{activity_name or activity_id}' 是手动创建的，跳过下载")
+                        return False, None  # 返回False表示没有文件可下载，不是Cookie问题
+                    else:
+                        # 如果页面内容异常，可能是Cookie问题
+                        self.debug_print("HTML页面异常，可能是Cookie问题")
+                        print("Cookie可能已过期，请重新输入Cookie")
+                        return True, None  # 返回True表示需要重新输入Cookie
+                
+                # 检查是否为有效的文件格式
+                valid_content_types = [
+                    'application/octet-stream',
+                    'application/vnd.ant.fit',
+                    'application/gpx+xml',
+                    'application/tcx+xml',
+                    'text/xml',
+                    'application/xml'
+                ]
+                
+                is_valid_file = any(ct in content_type for ct in valid_content_types)
+                
+                if is_valid_file or len(response.content) > 1000:  # 假设有效文件至少1KB
+                    # 保存文件
+                    return self._save_downloaded_file(response, activity_name or f"activity_{activity_id}", content_type)
                 else:
-                    # 如果没有活动名，使用默认格式
-                    base_filename = f"activity_{activity_id}"
-                
-                # 判断文件类型并保存
-                download_path = self._save_downloaded_file(response, base_filename, content_type)
-                
-                if download_path:
-                    return True, download_path
-                else:
+                    self.debug_print(f"未知的文件格式，Content-Type: {content_type}")
                     return False, None
                     
-            else:
-                self.debug_print(f"下载失败 (状态码: {response.status_code})")
+            elif response.status_code == 404:
+                self.debug_print("活动不存在或没有原始文件")
+                print(f"活动 {activity_id} 不存在或没有原始文件")
                 return False, None
                 
+            elif response.status_code in [401, 403]:
+                self.debug_print("认证失败，Cookie可能已过期")
+                print("Cookie已过期，请重新输入")
+                return True, None
+                
+            else:
+                self.debug_print(f"下载失败，状态码: {response.status_code}")
+                return True, None
+                
         except Exception as e:
-            self.debug_print(f"下载出错: {e}")
-            return False, None
+            self.debug_print(f"下载请求异常: {e}")
+            return True, None
     
-    def _save_downloaded_file(self, response: requests.Response, base_filename: str, content_type: str) -> Optional[str]:
+    def _save_downloaded_file(self, response: requests.Response, base_filename: str, content_type: str) -> Tuple[bool, Optional[str]]:
         """保存下载的文件"""
         try:
             if 'application/octet-stream' in content_type or 'application/fit' in content_type:
@@ -398,7 +488,7 @@ class StravaClient:
                 
                 print(f"FIT文件已成功下载: {filename}")
                 self.debug_print(f"文件大小: {len(response.content)} bytes")
-                return download_path
+                return True, download_path
                 
             elif 'xml' in content_type or '<?xml' in response.text:
                 # XML格式文件（TCX/GPX）
@@ -417,17 +507,17 @@ class StravaClient:
                 
                 print(f"XML文件已成功下载: {filename}")
                 self.debug_print(f"文件大小: {len(content)} characters")
-                return download_path
+                return True, download_path
             else:
                 self.debug_print(f"未知的文件格式，Content-Type: {content_type}")
                 if hasattr(response, 'text'):
                     preview = response.text[:200] if response.text else str(response.content[:200]) 
                     self.debug_print(f"响应内容开头: {preview}")
-                return None
+                return False, None
                 
         except Exception as e:
             self.debug_print(f"文件保存失败: {e}")
-            return None
+            return False, None
     
     def get_activities_for_migration(self, batch_size: int = 10, 
                                     after: Optional[datetime] = None,

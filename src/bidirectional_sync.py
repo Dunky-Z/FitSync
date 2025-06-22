@@ -10,6 +10,7 @@ from activity_matcher import ActivityMatcher
 from strava_client import StravaClient
 from garmin_sync_client import GarminSyncClient
 from onedrive_client import OneDriveClient
+from igpsport_client import IGPSportClient
 from file_converter import FileConverter
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class BidirectionalSync:
         self.strava_client = StravaClient(config_manager, debug)
         self.garmin_client = GarminSyncClient(config_manager, debug)
         self.onedrive_client = OneDriveClient(config_manager, debug)
+        self.igpsport_client = IGPSportClient(config_manager, debug)
         self.file_converter = FileConverter()
         
         # 支持的同步方向
@@ -34,7 +36,8 @@ class BidirectionalSync:
             ("strava", "garmin"),
             ("garmin", "strava"),
             ("strava", "onedrive"),
-            ("garmin", "onedrive")
+            ("garmin", "onedrive"),
+            ("strava", "igpsport")
         ]
     
     def debug_print(self, message: str) -> None:
@@ -201,6 +204,13 @@ class BidirectionalSync:
             if source_platform == "strava":
                 metadata = self.strava_client.convert_to_activity_metadata(activity_data)
                 activity_id = str(activity_data.get("id", ""))
+                
+                # 检查是否为手动创建的活动
+                if not self.strava_client._has_original_file(activity_data):
+                    self.debug_print(f"跳过手动创建的活动: {activity_id}")
+                    print(f"跳过手动创建的活动: {metadata.name}")
+                    return "skipped"
+                    
             elif source_platform == "garmin":
                 metadata = self.garmin_client.convert_to_activity_metadata(activity_data)
                 activity_id = str(activity_data.get("activityId", ""))
@@ -231,7 +241,7 @@ class BidirectionalSync:
             
             # 上传到目标平台
             upload_success = self._upload_to_target_platform(
-                target_platform, cache_file_path
+                target_platform, cache_file_path, metadata.name
             )
             
             if upload_success:
@@ -281,7 +291,7 @@ class BidirectionalSync:
             logger.error(f"下载活动文件失败: {e}")
             return None
     
-    def _upload_to_target_platform(self, platform: str, file_path: str) -> bool:
+    def _upload_to_target_platform(self, platform: str, file_path: str, activity_name: str = None) -> bool:
         """上传文件到目标平台"""
         try:
             if platform == "strava":
@@ -292,6 +302,8 @@ class BidirectionalSync:
                 return self.garmin_client.upload_file(file_path)
             elif platform == "onedrive":
                 return self._upload_to_onedrive(file_path)
+            elif platform == "igpsport":
+                return self.igpsport_client.upload_file(file_path, activity_name)
             else:
                 return False
                 
@@ -428,7 +440,7 @@ class BidirectionalSync:
         
         # 添加API限制状态
         api_status = {}
-        for platform in ["strava", "garmin"]:
+        for platform in ["strava", "garmin", "igpsport"]:
             api_status[platform] = self.sync_manager.get_api_limit_status(platform)
         
         stats["api_limits"] = api_status

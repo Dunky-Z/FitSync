@@ -80,7 +80,8 @@ def select_sync_directions() -> list:
             {"name": "Strava -> Garmin", "value": "strava_to_garmin", "checked": False},
             {"name": "Garmin -> Strava", "value": "garmin_to_strava", "checked": False},
             {"name": "Strava -> OneDrive", "value": "strava_to_onedrive", "checked": False},
-            {"name": "Garmin -> OneDrive", "value": "garmin_to_onedrive", "checked": False}
+            {"name": "Garmin -> OneDrive", "value": "garmin_to_onedrive", "checked": False},
+            {"name": "Strava -> IGPSport", "value": "strava_to_igpsport", "checked": False}
         ],
         instruction="(使用空格键选择，回车键确认)"
     ).ask()
@@ -127,24 +128,84 @@ def select_migration_start_time(sync_direction: str) -> str:
 def select_batch_size(migration_mode: bool = True) -> int:
     """选择批次大小"""
     if migration_mode:
-        return questionary.select(
+        batch_choice = questionary.select(
             "选择历史迁移的批次大小:",
             choices=[
                 {"name": "调试模式 - 每次10个活动", "value": 10},
                 {"name": "正常模式 - 每次50个活动", "value": 50},
-                {"name": "快速模式 - 每次100个活动", "value": 100}
+                {"name": "快速模式 - 每次100个活动", "value": 100},
+                {"name": "自定义批次大小", "value": "custom"}
             ],
             instruction="(建议先用调试模式验证功能)"
         ).ask()
+        
+        if batch_choice == "custom":
+            while True:
+                try:
+                    custom_size = questionary.text(
+                        "请输入自定义批次大小 (1-500):",
+                        default="20"
+                    ).ask()
+                    
+                    if not custom_size:
+                        print("输入不能为空，请重新输入")
+                        continue
+                        
+                    batch_size = int(custom_size)
+                    
+                    if batch_size < 1:
+                        print("批次大小不能小于1，请重新输入")
+                        continue
+                    elif batch_size > 500:
+                        print("批次大小不能超过500，请重新输入")
+                        continue
+                    
+                    return batch_size
+                    
+                except ValueError:
+                    print("请输入有效的数字")
+                    continue
+        else:
+            return batch_choice
     else:
-        return questionary.select(
+        batch_choice = questionary.select(
             "选择增量同步的批次大小:",
             choices=[
                 {"name": "小批次 - 每次10个活动", "value": 10},
                 {"name": "中批次 - 每次30个活动", "value": 30},
-                {"name": "大批次 - 每次50个活动", "value": 50}
+                {"name": "大批次 - 每次50个活动", "value": 50},
+                {"name": "自定义批次大小", "value": "custom"}
             ]
         ).ask()
+        
+        if batch_choice == "custom":
+            while True:
+                try:
+                    custom_size = questionary.text(
+                        "请输入自定义批次大小 (1-200):",
+                        default="20"
+                    ).ask()
+                    
+                    if not custom_size:
+                        print("输入不能为空，请重新输入")
+                        continue
+                        
+                    batch_size = int(custom_size)
+                    
+                    if batch_size < 1:
+                        print("批次大小不能小于1，请重新输入")
+                        continue
+                    elif batch_size > 200:
+                        print("批次大小不能超过200，请重新输入")
+                        continue
+                    
+                    return batch_size
+                    
+                except ValueError:
+                    print("请输入有效的数字")
+                    continue
+        else:
+            return batch_choice
 
 
 def display_sync_status(sync_engine: BidirectionalSync) -> None:
@@ -270,6 +331,17 @@ def check_prerequisites(sync_engine: BidirectionalSync, directions: list = None)
         except Exception as e:
             issues.append(f"OneDrive配置问题: {e}")
     
+    # 检查IGPSport配置（如果需要）
+    if "igpsport" in required_platforms:
+        try:
+            print("检查IGPSport配置...")
+            if not sync_engine.igpsport_client.is_configured():
+                issues.append("IGPSport未配置")
+            elif not sync_engine.igpsport_client.test_connection():
+                issues.append("IGPSport连接失败")
+        except Exception as e:
+            issues.append(f"IGPSport配置问题: {e}")
+    
     if issues:
         print("\n发现以下问题:")
         for issue in issues:
@@ -283,6 +355,8 @@ def check_prerequisites(sync_engine: BidirectionalSync, directions: list = None)
             print("  - Garmin Connect: GARMIN_CONNECT_SETUP.md")
         if "onedrive" in required_platforms:
             print("  - OneDrive: 已配置，如有问题请检查访问令牌")
+        if "igpsport" in required_platforms:
+            print("  - IGPSport: IGPSPORT_SETUP.md")
         
         return False
     
@@ -298,7 +372,7 @@ def main():
     parser.add_argument('--debug', action='store_true', help='启用调试模式，显示详细信息')
     parser.add_argument('--auto', action='store_true', help='自动模式，使用默认设置直接同步')
     parser.add_argument('--directions', nargs='+', 
-                       choices=['strava_to_garmin', 'garmin_to_strava', 'strava_to_onedrive', 'garmin_to_onedrive'],
+                       choices=['strava_to_garmin', 'garmin_to_strava', 'strava_to_onedrive', 'garmin_to_onedrive', 'strava_to_igpsport'],
                        help='指定同步方向')
     parser.add_argument('--batch-size', type=int, default=10, help='批处理大小')
     args = parser.parse_args()
