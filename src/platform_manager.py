@@ -5,6 +5,7 @@ from strava_client import StravaClient
 from igpsport_client import IGPSportClient
 from garmin_client_wrapper import GarminClientWrapper
 from onedrive_client import OneDriveClient
+from intervals_icu_client import IntervalsIcuClient
 
 logger = logging.getLogger(__name__)
 
@@ -20,18 +21,21 @@ class PlatformManager:
         self.igpsport_client = IGPSportClient(config_manager, debug)
         self.garmin_client = GarminClientWrapper(config_manager, debug)
         self.onedrive_client = OneDriveClient(config_manager, debug)
+        self.intervals_icu_client = IntervalsIcuClient(config_manager, debug)
         
         # 平台映射
         self.platform_clients = {
             "igpsport": self.igpsport_client,
             "garmin": self.garmin_client,
-            "onedrive": self.onedrive_client
+            "onedrive": self.onedrive_client,
+            "intervals_icu": self.intervals_icu_client
         }
         
         self.platform_names = {
             "igpsport": "IGPSport",
             "garmin": "Garmin Connect",
-            "onedrive": "OneDrive"
+            "onedrive": "OneDrive",
+            "intervals_icu": "Intervals.icu"
         }
     
     def upload_to_platforms(self, file_path: str, platforms: List[str]) -> Dict[str, List[str]]:

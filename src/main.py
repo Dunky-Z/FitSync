@@ -464,6 +464,10 @@ def main():
                     print("\n正在上传到Garmin Connect...")
                     upload_to_garmin(file_path)
                     upload_success.append("Garmin Connect")
+                elif platform == "intervals_icu":
+                    print("\n正在上传到Intervals.icu...")
+                    upload_to_intervals_icu(file_path)
+                    upload_success.append("Intervals.icu")
             except Exception as e:
                 logger.error(f"{platform}上传失败: {e}")
                 upload_failed.append(platform)
@@ -1311,6 +1315,45 @@ def upload_to_garmin(file_path: str) -> None:
         print(f"Garmin Connect上传失败: {e}")
 
 
+def upload_to_intervals_icu(file_path: str) -> None:
+    """上传活动到Intervals.icu"""
+    try:
+        from intervals_icu_client import IntervalsIcuClient
+        from config_manager import ConfigManager
+        
+        # 初始化客户端
+        config_manager = ConfigManager()
+        intervals_client = IntervalsIcuClient(config_manager, debug=DEBUG)
+        
+        # 从文件名推断活动名称
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        activity_name = base_name.replace('_', ' ').replace('-', ' ')
+        
+        print("正在准备上传到Intervals.icu...")
+        
+        # 执行上传
+        result = intervals_client.upload_activity(
+            file_path=file_path,
+            name=activity_name,
+            description=f"通过同步工具上传 - {os.path.basename(file_path)}"
+        )
+        
+        if result['success']:
+            print("活动已成功上传到Intervals.icu！")
+            if 'url' in result:
+                print(f"查看活动: {result['url']}")
+        else:
+            raise Exception(result.get('error', '上传失败'))
+            
+    except ImportError as e:
+        print("无法导入intervals_icu_client模块")
+        raise
+    except Exception as e:
+        logger.error(f"Intervals.icu上传失败: {e}")
+        print(f"Intervals.icu上传失败: {e}")
+        raise
+
+
 def ask_upload_platforms() -> List[str]:
     """询问用户要上传到哪些平台"""
     print("\n选择上传平台:")
@@ -1320,7 +1363,8 @@ def ask_upload_platforms() -> List[str]:
         "选择要上传到的平台 (可多选):",
         choices=[
             {"name": "IGPSport", "value": "igpsport", "checked": False},
-            {"name": "Garmin Connect", "value": "garmin", "checked": False}
+            {"name": "Garmin Connect", "value": "garmin", "checked": False},
+            {"name": "Intervals.icu", "value": "intervals_icu", "checked": False}
         ],
         instruction="(使用空格键选择，回车键确认)"
     ).ask()
@@ -1341,6 +1385,8 @@ def ask_upload_platforms() -> List[str]:
             platform_names.append("IGPSport")
         if "garmin" in platforms:
             platform_names.append("Garmin Connect")
+        if "intervals_icu" in platforms:
+            platform_names.append("Intervals.icu")
         print(f"已选择上传到: {', '.join(platform_names)}")
     
     return platforms or []

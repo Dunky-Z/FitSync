@@ -46,6 +46,10 @@ class ConfigManager:
                 "access_token": "",
                 "tenant_id": "common"
             },
+            "intervals_icu": {
+                "user_id": "",
+                "api_key": ""
+            },
             "general": {
                 "debug_mode": False,
                 "auto_save_credentials": True
@@ -147,5 +151,7 @@ class ConfigManager:
             return (config.get("client_id") != "your_client_id_here" and 
                    config.get("client_secret") != "your_client_secret_here" and
                    config.get("refresh_token"))
+        elif platform == "intervals_icu":
+            return bool(config.get("user_id") and config.get("api_key"))
         
         return False 
