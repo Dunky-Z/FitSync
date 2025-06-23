@@ -11,6 +11,7 @@ from strava_client import StravaClient
 from garmin_sync_client import GarminSyncClient
 from onedrive_client import OneDriveClient
 from igpsport_client import IGPSportClient
+from intervals_icu_client import IntervalsIcuClient
 from file_converter import FileConverter
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class BidirectionalSync:
         self.garmin_client = GarminSyncClient(config_manager, debug)
         self.onedrive_client = OneDriveClient(config_manager, debug)
         self.igpsport_client = IGPSportClient(config_manager, debug)
+        self.intervals_icu_client = IntervalsIcuClient(config_manager, debug)
         self.file_converter = FileConverter()
         
         # 支持的同步方向
@@ -37,7 +39,8 @@ class BidirectionalSync:
             ("garmin", "strava"),
             ("strava", "onedrive"),
             ("garmin", "onedrive"),
-            ("strava", "igpsport")
+            ("strava", "igpsport"),
+            ("igpsport", "intervals_icu")
         ]
     
     def debug_print(self, message: str) -> None:
@@ -189,6 +192,10 @@ class BidirectionalSync:
                 return self.garmin_client.get_activities(
                     limit=limit, after=start_time, before=end_time
                 )
+            elif platform == "igpsport":
+                return self.igpsport_client.get_activities(
+                    limit=limit, after=start_time, before=end_time
+                )
             else:
                 raise ValueError(f"不支持的平台: {platform}")
                 
@@ -214,6 +221,9 @@ class BidirectionalSync:
             elif source_platform == "garmin":
                 metadata = self.garmin_client.convert_to_activity_metadata(activity_data)
                 activity_id = str(activity_data.get("activityId", ""))
+            elif source_platform == "igpsport":
+                metadata = self.igpsport_client.convert_to_activity_metadata(activity_data)
+                activity_id = str(activity_data.get("rideId", ""))
             else:
                 raise ValueError(f"不支持的源平台: {source_platform}")
             
@@ -225,19 +235,26 @@ class BidirectionalSync:
                 self.debug_print(f"活动{activity_id}已同步，跳过")
                 return "skipped"
             
-            # 添加到同步记录
-            self.sync_manager.add_sync_record(metadata, source_platform, activity_id)
-            
-            # 下载活动文件
-            cache_file_path = self._download_activity_file(
-                source_platform, activity_id, fingerprint, metadata.name
-            )
-            
-            if not cache_file_path:
-                self.sync_manager.update_sync_status(
-                    fingerprint, source_platform, target_platform, "failed"
+            # 检查是否存在相同的活动（重复检测）
+            existing_file = self._check_duplicate_activity(metadata, fingerprint)
+            if existing_file:
+                self.debug_print(f"发现重复活动，使用已有文件: {existing_file}")
+                print(f"发现重复活动 '{metadata.name}'，使用已缓存文件")
+                cache_file_path = existing_file
+            else:
+                # 添加到同步记录
+                self.sync_manager.add_sync_record(metadata, source_platform, activity_id)
+                
+                # 下载活动文件
+                cache_file_path = self._download_activity_file(
+                    source_platform, activity_id, fingerprint, metadata.name
                 )
-                return "failed"
+                
+                if not cache_file_path:
+                    self.sync_manager.update_sync_status(
+                        fingerprint, source_platform, target_platform, "failed"
+                    )
+                    return "failed"
             
             # 上传到目标平台
             upload_success = self._upload_to_target_platform(
@@ -278,6 +295,8 @@ class BidirectionalSync:
                 success = self.strava_client.download_activity_file(activity_id, cache_path)
             elif platform == "garmin":
                 success = self.garmin_client.download_activity_file(activity_id, cache_path)
+            elif platform == "igpsport":
+                success = self.igpsport_client.download_activity_file(activity_id, cache_path)
             else:
                 return None
             
@@ -289,6 +308,69 @@ class BidirectionalSync:
             
         except Exception as e:
             logger.error(f"下载活动文件失败: {e}")
+            return None
+    
+    def _check_duplicate_activity(self, metadata: ActivityMetadata, fingerprint: str) -> Optional[str]:
+        """检查是否存在重复活动，如果存在返回已缓存的文件路径"""
+        try:
+            # 使用活动匹配器查找相似活动
+            from database_manager import generate_activity_fingerprint
+            
+            # 获取数据库中所有活动记录
+            conn = self.sync_manager.db_manager._get_connection()
+            cursor = conn.cursor()
+            
+            # 查找相似时间范围内的活动（前后1小时）
+            from datetime import datetime, timedelta
+            
+            activity_time = datetime.fromisoformat(metadata.start_time.replace('Z', '+00:00'))
+            time_window_start = activity_time - timedelta(hours=1)
+            time_window_end = activity_time + timedelta(hours=1)
+            
+            cursor.execute('''
+                SELECT fingerprint, name, sport_type, start_time, distance, duration, elevation_gain
+                FROM activity_records 
+                WHERE start_time BETWEEN ? AND ?
+                AND sport_type = ?
+            ''', (
+                time_window_start.isoformat(),
+                time_window_end.isoformat(),
+                metadata.sport_type
+            ))
+            
+            similar_activities = []
+            for row in cursor.fetchall():
+                existing_metadata = ActivityMetadata(
+                    name=row['name'],
+                    sport_type=row['sport_type'],
+                    start_time=row['start_time'],
+                    distance=row['distance'],
+                    duration=row['duration'],
+                    elevation_gain=row['elevation_gain']
+                )
+                similar_activities.append((row['fingerprint'], existing_metadata))
+            
+            if not similar_activities:
+                return None
+            
+            # 使用活动匹配器检查是否有匹配的活动
+            best_match = self.activity_matcher.get_best_match(metadata, similar_activities)
+            
+            if best_match:
+                match_fingerprint, match_result = best_match
+                self.debug_print(f"找到匹配活动: {match_fingerprint}, 置信度: {match_result.confidence:.2f}")
+                
+                # 检查是否有缓存文件
+                for ext in ['fit', 'tcx', 'gpx']:
+                    cache_path = self.sync_manager.get_cache_file_path(match_fingerprint, ext)
+                    if os.path.exists(cache_path):
+                        self.debug_print(f"使用匹配活动的缓存文件: {cache_path}")
+                        return cache_path
+            
+            return None
+            
+        except Exception as e:
+            self.debug_print(f"重复活动检测失败: {e}")
             return None
     
     def _upload_to_target_platform(self, platform: str, file_path: str, activity_name: str = None) -> bool:
@@ -304,6 +386,8 @@ class BidirectionalSync:
                 return self._upload_to_onedrive(file_path)
             elif platform == "igpsport":
                 return self.igpsport_client.upload_file(file_path, activity_name)
+            elif platform == "intervals_icu":
+                return self.intervals_icu_client.upload_file(file_path)
             else:
                 return False
                 

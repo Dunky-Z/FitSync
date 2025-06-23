@@ -241,7 +241,7 @@ class IntervalsIcuClient:
                     if hasattr(file_obj[1], 'close'):
                         file_obj[1].close()
     
-    def upload_file(self, file_path: str) -> None:
+    def upload_file(self, file_path: str) -> bool:
         """简化的上传接口，用于兼容其他客户端"""
         try:
             # 从文件名推断活动名称
@@ -253,12 +253,17 @@ class IntervalsIcuClient:
                 description=f"通过同步工具上传于 {os.path.basename(file_path)}"
             )
             
-            if not result['success']:
-                raise Exception(result.get('error', '上传失败'))
+            if result['success']:
+                self.debug_print("Intervals.icu上传成功")
+                return True
+            else:
+                self.debug_print(f"Intervals.icu上传失败: {result.get('error', '未知错误')}")
+                return False
                 
         except Exception as e:
             logger.error(f"上传文件到Intervals.icu失败: {e}")
-            raise
+            self.debug_print(f"Intervals.icu上传异常: {e}")
+            return False
     
     def get_activities(self, limit: int = 30, 
                       oldest: str = None, 

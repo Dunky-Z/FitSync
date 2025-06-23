@@ -206,3 +206,6 @@ strava-to-trainingpeaks/
 本项目采用MIT许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
 
 需要不挂梯子使用Connect登录，会自动弹出更新手机号
+
+[Yesaye/tampermonkey-script: 油猴脚本](https://github.com/Yesaye/tampermonkey-script)
+[tyb311/SportTrails: 运动轨迹多平台管理软件【XOSS-iGPSPORT】](https://github.com/tyb311/SportTrails)

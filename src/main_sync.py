@@ -81,7 +81,8 @@ def select_sync_directions() -> list:
             {"name": "Garmin -> Strava", "value": "garmin_to_strava", "checked": False},
             {"name": "Strava -> OneDrive", "value": "strava_to_onedrive", "checked": False},
             {"name": "Garmin -> OneDrive", "value": "garmin_to_onedrive", "checked": False},
-            {"name": "Strava -> IGPSport", "value": "strava_to_igpsport", "checked": False}
+            {"name": "Strava -> IGPSport", "value": "strava_to_igpsport", "checked": False},
+            {"name": "IGPSport -> Intervals.icu", "value": "igpsport_to_intervals_icu", "checked": False}
         ],
         instruction="(使用空格键选择，回车键确认)"
     ).ask()
@@ -342,6 +343,17 @@ def check_prerequisites(sync_engine: BidirectionalSync, directions: list = None)
         except Exception as e:
             issues.append(f"IGPSport配置问题: {e}")
     
+    # 检查Intervals.icu配置（如果需要）
+    if "intervals_icu" in required_platforms:
+        try:
+            print("检查Intervals.icu配置...")
+            if not sync_engine.intervals_icu_client.is_configured():
+                issues.append("Intervals.icu未配置")
+            elif not sync_engine.intervals_icu_client.test_connection():
+                issues.append("Intervals.icu连接失败")
+        except Exception as e:
+            issues.append(f"Intervals.icu配置问题: {e}")
+    
     if issues:
         print("\n发现以下问题:")
         for issue in issues:
@@ -357,6 +369,8 @@ def check_prerequisites(sync_engine: BidirectionalSync, directions: list = None)
             print("  - OneDrive: 已配置，如有问题请检查访问令牌")
         if "igpsport" in required_platforms:
             print("  - IGPSport: IGPSPORT_SETUP.md")
+        if "intervals_icu" in required_platforms:
+            print("  - Intervals.icu: INTERVALS_ICU_SETUP.md")
         
         return False
     
@@ -372,7 +386,7 @@ def main():
     parser.add_argument('--debug', action='store_true', help='启用调试模式，显示详细信息')
     parser.add_argument('--auto', action='store_true', help='自动模式，使用默认设置直接同步')
     parser.add_argument('--directions', nargs='+', 
-                       choices=['strava_to_garmin', 'garmin_to_strava', 'strava_to_onedrive', 'garmin_to_onedrive', 'strava_to_igpsport'],
+                       choices=['strava_to_garmin', 'garmin_to_strava', 'strava_to_onedrive', 'garmin_to_onedrive', 'strava_to_igpsport', 'igpsport_to_intervals_icu'],
                        help='指定同步方向')
     parser.add_argument('--batch-size', type=int, default=10, help='批处理大小')
     args = parser.parse_args()
