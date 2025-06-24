@@ -1,75 +1,113 @@
-# Strava to TrainingPeaks 运动数据同步工具
+# Strava to Multi-Platform 运动数据同步工具
 
-一个功能强大的运动数据同步工具，支持在Strava、Garmin Connect、TrainingPeaks等平台之间进行双向数据同步。
+一个功能强大的运动数据同步工具，支持在Strava、Garmin Connect、OneDrive、IGPSport、Intervals.icu等平台之间进行双向数据同步。
 
-## ✨ 主要特性
+## 主要特性
 
-### 🔄 双向同步功能
-- **Strava ↔ Garmin Connect** 双向同步
+### 双向同步功能
+- **多平台支持**：Strava、Garmin Connect、OneDrive、IGPSport、Intervals.icu
 - **智能活动匹配**：基于时间、运动类型、距离、时长的多维度匹配算法
 - **增量同步**：只同步新增活动，避免重复处理
-- **API限制管理**：智能管理Strava API调用限制（每日200次）
+- **API限制管理**：智能管理Strava API调用限制（每日180次，每15分钟90次）
+- **历史迁移模式**：支持历史活动的批量迁移
 
-### 🗄️ SQLite数据库系统
+### SQLite数据库系统
 - **高性能存储**：使用SQLite替代JSON文件，提供更好的查询性能
 - **数据完整性**：ACID事务保证数据安全
 - **自动迁移**：从旧的JSON格式无缝迁移到SQLite
 - **智能缓存**：本地文件缓存管理，避免重复下载
 
-### 🎯 智能匹配算法
+### 智能匹配算法
 - **多维度匹配**：时间（5分钟容差）、运动类型、距离（5%容差）、时长（10%容差）
 - **置信度评分**：0.0-1.0评分系统，确保匹配准确性
 - **运动类型标准化**：自动识别相似运动类型（如跑步、越野跑、跑步机跑步）
 
-## 🚀 快速开始
+### 文件格式转换
+- **多格式支持**：FIT、TCX、GPX格式之间的转换
+- **自动转换**：上传时自动根据目标平台需求转换格式
+- **批量转换**：支持批量文件格式转换
+
+## 快速开始
+
+### 环境要求
+- Python 3.7+
+- 操作系统：Windows、macOS、Linux
 
 ### 安装依赖
 ```bash
 pip install -r requirements.txt
 ```
 
-### 配置API凭据
-1. **Strava API配置**：参考 [STRAVA_API_SETUP.md](STRAVA_API_SETUP.md)
-2. **Garmin Connect配置**：参考 [GARMIN_CONNECT_SETUP.md](GARMIN_CONNECT_SETUP.md)
+### 配置说明
+项目使用统一的配置文件 `.app_config.json` 管理所有平台的配置信息。
 
-### 运行双向同步
+#### 支持的平台配置：
+
+1. **Strava API配置**
+   - client_id：Strava应用ID
+   - client_secret：Strava应用密钥
+   - refresh_token：刷新令牌
+
+2. **Garmin Connect配置**
+   - username：用户名
+   - password：密码
+   - auth_domain：认证域（GLOBAL或CN）
+
+3. **OneDrive配置**
+   - client_id：Azure应用ID
+   - client_secret：Azure应用密钥
+   - redirect_uri：重定向URI
+
+4. **IGPSport配置**
+   - username：用户名
+   - password：密码
+
+5. **Intervals.icu配置**
+   - user_id：用户ID
+   - api_key：API密钥
+
+### 运行程序
+
+#### 交互式模式
 ```bash
-# 交互模式
 python src/main_sync.py
+```
 
-# 自动模式
+#### 自动化模式
+```bash
+# 单向同步
 python src/main_sync.py --auto --directions strava_to_garmin --batch-size 10
 
 # 双向同步
-python src/main_sync.py --auto --directions both --batch-size 5 --debug
+python src/main_sync.py --auto --directions strava_to_garmin garmin_to_strava --batch-size 5
+
+# 历史迁移模式
+python src/main_sync.py --auto --directions strava_to_garmin --batch-size 20 --migration-mode
 ```
 
-## 🧪 测试系统
-
-项目包含完整的测试套件，验证所有核心功能：
-
-### 运行测试
+#### 文件转换工具
 ```bash
-# 运行所有测试
-python run_tests.py
+# 交互式转换
+python src/file_converter.py --interactive
 
-# 运行快速测试
-python run_tests.py --test quick
+# 单文件转换
+python src/file_converter.py input.fit gpx
 
-# 运行特定测试
-python run_tests.py --test sync        # 双向同步测试
-python run_tests.py --test migration   # 数据库迁移测试
-python run_tests.py --test main        # 主要功能测试
+# 批量转换
+python src/file_converter.py --batch /path/to/files gpx
 ```
 
-### 测试覆盖
-- ✅ **同步管理器测试**：活动指纹生成、状态跟踪、缓存管理
-- ✅ **活动匹配器测试**：多维度匹配算法、置信度评分
-- ✅ **平台客户端测试**：Strava和Garmin API连接
-- ✅ **数据库迁移测试**：JSON到SQLite的完整迁移流程
-- ✅ **性能对比测试**：JSON vs SQLite性能基准测试
+## 同步方向支持
 
-## 📊 数据库架构
+### 当前支持的同步方向
+- **Strava → Garmin Connect**：将Strava活动同步到Garmin
+- **Garmin Connect → Strava**：将Garmin活动同步到Strava
+- **Strava → OneDrive**：将Strava活动文件备份到OneDrive
+- **Garmin Connect → OneDrive**：将Garmin活动文件备份到OneDrive
+- **Strava → IGPSport**：将Strava活动同步到IGPSport
+- **IGPSport → Intervals.icu**：将IGPSport活动同步到Intervals.icu
+
+## 数据库架构
 
 ### SQLite表结构
 ```sql
@@ -104,6 +142,33 @@ CREATE TABLE sync_status (
     updated_at TEXT NOT NULL,       -- 更新时间
     UNIQUE(fingerprint, source_platform, target_platform)
 );
+
+-- 文件缓存表
+CREATE TABLE file_cache (
+    fingerprint TEXT NOT NULL,      -- 活动指纹
+    file_format TEXT NOT NULL,      -- 文件格式
+    file_path TEXT NOT NULL,        -- 文件路径
+    file_size INTEGER,              -- 文件大小
+    created_at TEXT NOT NULL,       -- 创建时间
+    UNIQUE(fingerprint, file_format)
+);
+
+-- 同步配置表
+CREATE TABLE sync_config (
+    key TEXT PRIMARY KEY,           -- 配置键
+    value TEXT NOT NULL,            -- 配置值
+    updated_at TEXT NOT NULL        -- 更新时间
+);
+
+-- API限制表
+CREATE TABLE api_limits (
+    platform TEXT PRIMARY KEY,      -- 平台名称
+    daily_calls INTEGER DEFAULT 0,  -- 每日调用次数
+    quarter_hour_calls INTEGER DEFAULT 0, -- 15分钟调用次数
+    daily_limit INTEGER NOT NULL,   -- 每日限制
+    quarter_hour_limit INTEGER NOT NULL, -- 15分钟限制
+    last_reset TEXT NOT NULL        -- 最后重置时间
+);
 ```
 
 ### 数据迁移
@@ -116,96 +181,66 @@ python src/main_sync.py
 python tests/test_database_migration.py
 ```
 
-## 🔧 高级功能
+## 命令行参数
 
-### API限制管理
-- **Strava限制**：每日180次（保留20次余量），每15分钟90次（保留10次余量）
-- **智能调度**：自动检查API限制，避免超限
-- **实时监控**：显示剩余API调用次数
+### main_sync.py 参数
+```bash
+python src/main_sync.py [选项]
 
-### 缓存系统
-- **本地文件缓存**：避免重复下载相同活动文件
-- **智能清理**：自动清理30天以上的过期缓存
-- **文件完整性**：验证缓存文件存在性和大小
+选项:
+  --auto                    自动模式，跳过交互式选择
+  --directions DIR [DIR...] 同步方向列表
+  --batch-size N           每批处理的活动数量 (默认: 10)
+  --migration-mode         启用历史迁移模式
+  --debug                  启用调试模式
+  --cleanup-cache          清理过期缓存文件
+  --status                 显示同步状态
+  --clear-garmin-session   清除Garmin会话
 
-### 同步策略
-- **首次同步**：获取最近30天的活动
-- **增量同步**：从上次同步时间开始，1小时重叠避免遗漏
-- **断点续传**：支持中断后继续同步
-- **错误恢复**：自动重试失败的同步操作
-
-## 📈 性能优势
-
-基于1000条记录的性能测试对比：
-
-| 指标 | JSON文件 | SQLite数据库 | 优势 |
-|------|----------|-------------|------|
-| **查询性能** | 线性遍历 | 索引查询 | **SQLite快数倍** |
-| **数据完整性** | 无保障 | ACID事务 | **SQLite更安全** |
-| **并发访问** | 文件锁定 | 数据库锁 | **SQLite更稳定** |
-| **复杂查询** | 不支持 | SQL查询 | **SQLite功能更强** |
-
-## 🗂️ 项目结构
-
-```
-strava-to-trainingpeaks/
-├── src/                          # 源代码目录
-│   ├── main_sync.py             # 双向同步主程序
-│   ├── database_manager.py      # SQLite数据库管理器
-│   ├── sync_manager.py          # 同步管理器
-│   ├── activity_matcher.py      # 活动匹配器
-│   ├── bidirectional_sync.py    # 双向同步核心
-│   ├── strava_client.py         # Strava客户端
-│   ├── garmin_sync_client.py    # Garmin同步客户端
-│   └── ...                      # 其他模块
-├── tests/                        # 测试目录
-│   ├── test_sync.py             # 双向同步测试
-│   ├── test_database_migration.py # 数据库迁移测试
-│   └── test_main.py             # 主要功能测试
-├── run_tests.py                 # 测试运行脚本
-├── sync_database.db             # SQLite数据库文件
-├── activity_cache/              # 活动文件缓存目录
-└── README.md                    # 项目文档
+同步方向:
+  strava_to_garmin        Strava到Garmin
+  garmin_to_strava        Garmin到Strava
+  strava_to_onedrive      Strava到OneDrive
+  garmin_to_onedrive      Garmin到OneDrive
+  strava_to_igpsport      Strava到IGPSport
+  igpsport_to_intervals_icu IGPSport到Intervals.icu
 ```
 
-## 🔮 未来计划
+### file_converter.py 参数
+```bash
+python src/file_converter.py [选项] [输入] [格式]
 
-### 第二阶段：扩展平台支持
-- **IGPSport平台**：添加IGPSport双向同步支持
-- **TrainingPeaks增强**：完善TrainingPeaks集成
-- **更多平台**：支持更多运动平台
+选项:
+  -i, --interactive        交互模式
+  -b, --batch             批量转换模式
+  -o, --output OUTPUT     输出文件或目录
+  --info                  显示文件信息
+  -v, --verbose           详细输出
 
-### 第三阶段：高级功能
-- **Web管理界面**：基于Web的同步管理界面
-- **数据分析**：运动数据统计和分析功能
-- **自动调度**：定时自动同步功能
-- **云端备份**：数据库云端备份和恢复
+格式:
+  fit, tcx, gpx           支持的文件格式
+```
 
-## 📝 更新日志
+### 调试模式
+```bash
+# 启用调试输出
+python src/main_sync.py --debug
 
-### v2.0.0 (2025-06-15)
-- ✨ **重大更新**：从JSON文件升级到SQLite数据库系统
-- 🚀 **性能提升**：查询性能大幅提升，支持复杂SQL查询
-- 🔄 **自动迁移**：无缝从旧JSON格式迁移到SQLite
-- 🧪 **完整测试**：添加全面的测试套件和性能基准测试
-- 📊 **数据完整性**：ACID事务保证数据安全
-- 🎯 **智能缓存**：优化文件缓存管理系统
+# 查看同步状态
+python src/main_sync.py --status
 
-### v1.0.0 (2025-06-14)
-- 🎉 **首次发布**：Strava ↔ Garmin Connect双向同步功能
-- 🤖 **智能匹配**：多维度活动匹配算法
-- 📈 **API管理**：Strava API限制智能管理
-- 💾 **本地缓存**：活动文件本地缓存系统
+# 清理缓存
+python src/main_sync.py --cleanup-cache
+```
 
-## 🤝 贡献
-
-欢迎提交Issue和Pull Request来改进这个项目！
-
-## 📄 许可证
+## 许可证
 
 本项目采用MIT许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
 
-需要不挂梯子使用Connect登录，会自动弹出更新手机号
-
-[Yesaye/tampermonkey-script: 油猴脚本](https://github.com/Yesaye/tampermonkey-script)
-[tyb311/SportTrails: 运动轨迹多平台管理软件【XOSS-iGPSPORT】](https://github.com/tyb311/SportTrails)
+## 相关链接
+- [Yesaye/tampermonkey-script: 油猴脚本](https://github.com/Yesaye/tampermonkey-script)
+- [tyb311/SportTrails: 运动轨迹多平台管理软件【XOSS-iGPSPORT】](https://github.com/tyb311/SportTrails)
+- [Strava API文档](https://developers.strava.com/)
+- [Garmin Connect IQ](https://developer.garmin.com/)
+- [Microsoft Graph API](https://docs.microsoft.com/en-us/graph/)
+- [Intervals.icu API](https://intervals.icu/api)
