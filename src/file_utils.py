@@ -112,7 +112,7 @@ class FileUtils:
         # 基本的格式转换（简化版）
         gpx_content = tcx_content.replace(
             '<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">',
-            '<gpx version="1.1" creator="Strava-to-MultiPlatform" xmlns="http://www.topografix.com/GPX/1/1">'
+            '<gpx version="1.1" creator="FitSync" xmlns="http://www.topografix.com/GPX/1/1">'
         )
         gpx_content = gpx_content.replace('</TrainingCenterDatabase>', '</gpx>')
         

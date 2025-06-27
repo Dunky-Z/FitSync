@@ -1,4 +1,4 @@
-# Strava to Multi-Platform 运动数据同步工具
+# FitSync - 多平台运动数据同步工具
 
 一个功能强大的运动数据同步工具，支持在Strava、Garmin Connect、OneDrive、IGPSport、Intervals.icu等平台之间进行双向数据同步。
 

@@ -14,14 +14,14 @@ def read(file_name):
 
 
 setup(
-    name="strava-to-trainingpeaks",
+    name="fitsync",
     version=re.findall(
         re.compile(r'[0-9]+\.[0-9]+\.[0-9]+'),
         read('__version__.py')
     )[0],
     author="Lucas de Brito Silva",
     author_email="lucasbsilva29@gmail.com",
-    description="A tool to sync Strava activities with TrainingPeaks, with the OpenAI API creating the workout descriptions.",
+    description="FitSync - A multi-platform fitness data synchronization tool supporting Strava, Garmin Connect, OneDrive, IGPSport and Intervals.icu.",
     packages=find_packages(),
     install_requires=[
         "defusedxml==0.7.1",
@@ -37,7 +37,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "strava-to-trainingpeaks=src.main:main",
+            "fitsync=src.main:main",
         ],
     },
 )

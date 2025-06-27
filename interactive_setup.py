@@ -23,9 +23,9 @@ def global_installation():
 
 def docker_setup():
     subprocess.run(['/usr/local/bin/docker', 'build', '-t',
-                   'strava-to-trainingpeaks', '.'], check=True)
+                   'fitsync', '.'], check=True)
     subprocess.run(['/usr/local/bin/docker', 'run', '-it', '--rm',
-                   'strava-to-trainingpeaks'], check=True)
+                   'fitsync'], check=True)
 
 
 def main():

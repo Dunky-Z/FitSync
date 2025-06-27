@@ -76,7 +76,7 @@ class IntervalsIcuClient:
                 user_id, api_key = self.get_credentials()
             
             headers = {
-                'User-Agent': 'Strava-to-TrainingPeaks Sync Tool'
+                'User-Agent': 'FitSync Multi-Platform Sync Tool'
             }
             
             # 使用athlete ID为0表示当前用户
@@ -146,7 +146,7 @@ class IntervalsIcuClient:
         
         # 准备请求头 - 使用Basic认证
         headers = {
-            'User-Agent': 'Strava-to-TrainingPeaks Sync Tool'
+            'User-Agent': 'FitSync Multi-Platform Sync Tool'
         }
         
         # 准备文件上传
@@ -282,7 +282,7 @@ class IntervalsIcuClient:
             user_id, api_key = self.get_credentials()
             
             headers = {
-                'User-Agent': 'Strava-to-TrainingPeaks Sync Tool'
+                'User-Agent': 'FitSync Multi-Platform Sync Tool'
             }
             
             # 如果没有指定oldest，默认为30天前
