@@ -107,6 +107,8 @@ python src/file_converter.py --batch /path/to/files gpx
 - **Strava → IGPSport**：将Strava活动同步到IGPSport
 - **IGPSport → Intervals.icu**：将IGPSport活动同步到Intervals.icu
 
+> 注意，目前同步到OneDrive的目的是为了Fog of World使用，所以同步到OneDrive的文件格式为GPX，而不是FIT，并且同步到OneDrive的目录是Fog of World的目录。在Fog of World中，开启OneDrive同步后可以将OneDrive的GPX轨迹导入到Fog of World中。
+
 ## 数据库架构
 
 ### SQLite表结构

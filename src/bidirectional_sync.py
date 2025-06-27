@@ -383,7 +383,14 @@ class BidirectionalSync:
             elif platform == "garmin":
                 return self.garmin_client.upload_file(file_path)
             elif platform == "onedrive":
-                return self._upload_to_onedrive(file_path)
+                # 传递activity_name和fingerprint，让OneDriveClient处理所有逻辑
+                fingerprint = self._extract_fingerprint_from_file_path(file_path)
+                return self.onedrive_client.upload_file(
+                    file_path=file_path,
+                    activity_name=activity_name,
+                    fingerprint=fingerprint,
+                    convert_fit_to_gpx=True
+                )
             elif platform == "igpsport":
                 return self.igpsport_client.upload_file(file_path, activity_name)
             elif platform == "intervals_icu":
@@ -395,80 +402,35 @@ class BidirectionalSync:
             logger.error(f"上传到{platform}失败: {e}")
             return False
     
-    def _upload_to_onedrive(self, file_path: str) -> bool:
-        """上传文件到OneDrive的Fog of World Import目录
-        
-        如果是FIT文件，会同时生成GPX文件并上传两种格式
-        """
+    def _extract_fingerprint_from_file_path(self, file_path: str) -> Optional[str]:
+        """从文件路径中提取fingerprint（通过文件名或缓存路径）"""
         try:
-            # 使用Fog of World的导入目录
-            onedrive_path = "/Apps/Fog of World/Import"
-            
-            self.debug_print(f"正在上传文件到OneDrive: {onedrive_path}")
-            
-            # 检查OneDrive连接
-            if not self.onedrive_client.test_connection():
-                self.debug_print("OneDrive连接失败")
-                return False
-            
-            # 获取文件信息
+            # 从缓存路径中提取fingerprint
+            # 缓存文件名格式通常是 fingerprint.ext
             file_name = os.path.basename(file_path)
-            file_ext = os.path.splitext(file_name)[1].lower()
+            name_without_ext = os.path.splitext(file_name)[0]
             
-            upload_success = True
+            # 检查是否为有效的fingerprint格式（MD5哈希）
+            if len(name_without_ext) == 32 and all(c in '0123456789abcdef' for c in name_without_ext.lower()):
+                self.debug_print(f"从文件名提取fingerprint: {name_without_ext}")
+                return name_without_ext
             
-            # 上传原始文件
-            success = self.onedrive_client.upload_file(file_path, onedrive_path)
-            if success:
-                self.debug_print(f"原始文件 {file_name} 已成功上传到OneDrive")
-            else:
-                self.debug_print(f"原始文件 {file_name} 上传失败")
-                upload_success = False
+            # 如果无法从文件名提取，尝试从缓存目录结构中查找
+            # 检查文件是否在activity_cache目录中
+            if 'activity_cache' in file_path:
+                # 尝试从缓存目录结构中提取fingerprint
+                parts = file_path.split(os.sep)
+                for part in parts:
+                    if len(part) == 32 and all(c in '0123456789abcdef' for c in part.lower()):
+                        self.debug_print(f"从路径提取fingerprint: {part}")
+                        return part
             
-            # 如果是FIT文件，同时生成并上传GPX文件
-            if file_ext == '.fit':
-                try:
-                    self.debug_print("检测到FIT文件，开始生成GPX文件...")
-                    
-                    # 生成GPX文件路径
-                    gpx_file_path = file_path.replace('.fit', '.gpx')
-                    
-                    # 转换FIT到GPX
-                    converted_gpx = self.file_converter.convert_file(file_path, 'gpx', gpx_file_path)
-                    
-                    if converted_gpx and os.path.exists(converted_gpx):
-                        self.debug_print(f"FIT文件已转换为GPX: {converted_gpx}")
-                        
-                        # 上传GPX文件
-                        gpx_success = self.onedrive_client.upload_file(converted_gpx, onedrive_path)
-                        
-                        if gpx_success:
-                            gpx_file_name = os.path.basename(converted_gpx)
-                            self.debug_print(f"GPX文件 {gpx_file_name} 已成功上传到OneDrive")
-                        else:
-                            self.debug_print(f"GPX文件上传失败")
-                            # GPX上传失败不影响整体成功状态，因为原始FIT文件已上传
-                        
-                        # 清理临时GPX文件
-                        try:
-                            if os.path.exists(converted_gpx):
-                                os.remove(converted_gpx)
-                                self.debug_print(f"已清理临时GPX文件: {converted_gpx}")
-                        except Exception as cleanup_e:
-                            logger.warning(f"清理临时GPX文件失败: {cleanup_e}")
-                    
-                    else:
-                        self.debug_print("FIT到GPX转换失败，只上传原始FIT文件")
-                        
-                except Exception as convert_e:
-                    logger.warning(f"FIT到GPX转换过程出错: {convert_e}")
-                    self.debug_print("FIT转换出错，但原始文件已上传成功")
+            self.debug_print(f"无法从文件路径提取fingerprint: {file_path}")
+            return None
             
-            return upload_success
-                
         except Exception as e:
-            logger.error(f"OneDrive上传失败: {e}")
-            return False
+            self.debug_print(f"提取fingerprint失败: {e}")
+            return None
     
     def _check_api_limits(self, platform: str) -> bool:
         """检查API限制"""

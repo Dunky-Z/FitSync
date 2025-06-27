@@ -7,6 +7,20 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from urllib.parse import urlencode, parse_qs, urlparse
 import webbrowser
+import sys
+
+# 获取项目根目录路径
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 动态添加Python模块搜索路径
+user_site_packages = os.path.expanduser("~/.local/lib/python3.10/site-packages")
+system_dist_packages = "/usr/lib/python3/dist-packages"
+
+# 将路径添加到sys.path开头，优先级更高
+if user_site_packages not in sys.path:
+    sys.path.insert(0, user_site_packages)
+if system_dist_packages not in sys.path:
+    sys.path.insert(0, system_dist_packages)
 
 from config_manager import ConfigManager
 
@@ -38,6 +52,31 @@ class OneDriveClient:
         self.session.headers.update({
             'User-Agent': 'Strava-OneDrive-Sync/1.0'
         })
+        
+        # 支持的授权域
+        self.auth_endpoints = {
+            "common": "https://login.microsoftonline.com/common/oauth2/v2.0",
+            "consumers": "https://login.microsoftonline.com/consumers/oauth2/v2.0",
+            "organizations": "https://login.microsoftonline.com/organizations/oauth2/v2.0"
+        }
+        
+        # 延迟导入file_converter和database_manager，避免循环导入
+        self.file_converter = None
+        self.db_manager = None
+    
+    def _get_file_converter(self):
+        """延迟导入文件转换器"""
+        if self.file_converter is None:
+            from file_converter import FileConverter
+            self.file_converter = FileConverter()
+        return self.file_converter
+    
+    def _get_database_manager(self):
+        """延迟导入数据库管理器"""
+        if self.db_manager is None:
+            from database_manager import DatabaseManager
+            self.db_manager = DatabaseManager(debug=self.debug)
+        return self.db_manager
     
     def debug_print(self, message: str) -> None:
         """调试输出"""
@@ -227,14 +266,155 @@ class OneDriveClient:
             logger.error(f"OneDrive创建文件夹失败: {e}")
             return None
     
-    def upload_file(self, file_path: str, remote_path: str = "/Sports-Activities") -> bool:
-        """上传文件到OneDrive"""
+    def upload_file(self, file_path: str, activity_name: str = None, fingerprint: str = None, 
+                   convert_fit_to_gpx: bool = True, remote_path: str = "/Apps/Fog of World/Import") -> bool:
+        """上传文件到OneDrive
+        
+        Args:
+            file_path: 本地文件路径
+            activity_name: 活动名称（用于生成友好的文件名）
+            fingerprint: 活动指纹（用于从数据库查询活动名）
+            convert_fit_to_gpx: 是否将FIT文件同时转换为GPX上传
+            remote_path: 远程目录路径
+        
+        Returns:
+            上传是否成功
+        """
         if not os.path.exists(file_path):
             self.debug_print(f"文件不存在: {file_path}")
             return False
         
         try:
+            self.debug_print(f"正在上传文件到OneDrive: {remote_path}")
+            
+            # 检查OneDrive连接
+            if not self.test_connection():
+                self.debug_print("OneDrive连接失败")
+                return False
+            
+            # 确定活动名称
+            final_activity_name = self._determine_activity_name(activity_name, fingerprint, file_path)
+            
+            # 获取文件信息
             file_name = os.path.basename(file_path)
+            file_ext = os.path.splitext(file_name)[1].lower()
+            
+            upload_success = True
+            
+            # 生成友好的文件名
+            friendly_file_name = self._generate_friendly_filename(final_activity_name, file_ext)
+            
+            # 上传原始文件
+            success = self._upload_single_file(file_path, remote_path, friendly_file_name)
+            if success:
+                self.debug_print(f"原始文件 {friendly_file_name} 已成功上传到OneDrive")
+            else:
+                self.debug_print(f"原始文件 {friendly_file_name} 上传失败")
+                upload_success = False
+            
+            # 如果是FIT文件，同时生成并上传GPX文件
+            if file_ext == '.fit' and convert_fit_to_gpx:
+                try:
+                    self.debug_print("检测到FIT文件，开始生成GPX文件...")
+                    
+                    # 生成GPX文件路径
+                    gpx_file_path = file_path.replace('.fit', '.gpx')
+                    
+                    # 转换FIT到GPX
+                    file_converter = self._get_file_converter()
+                    converted_gpx = file_converter.convert_file(file_path, 'gpx', gpx_file_path)
+                    
+                    if converted_gpx and os.path.exists(converted_gpx):
+                        self.debug_print(f"FIT文件已转换为GPX: {converted_gpx}")
+                        
+                        # 生成GPX文件的友好名称
+                        gpx_friendly_name = self._generate_friendly_filename(final_activity_name, '.gpx')
+                        
+                        # 上传GPX文件
+                        gpx_success = self._upload_single_file(converted_gpx, remote_path, gpx_friendly_name)
+                        
+                        if gpx_success:
+                            self.debug_print(f"GPX文件 {gpx_friendly_name} 已成功上传到OneDrive")
+                        else:
+                            self.debug_print(f"GPX文件上传失败")
+                            # GPX上传失败不影响整体成功状态，因为原始FIT文件已上传
+                        
+                        # 清理临时GPX文件
+                        try:
+                            if os.path.exists(converted_gpx):
+                                os.remove(converted_gpx)
+                                self.debug_print(f"已清理临时GPX文件: {converted_gpx}")
+                        except Exception as cleanup_e:
+                            logger.warning(f"清理临时GPX文件失败: {cleanup_e}")
+                    
+                    else:
+                        self.debug_print("FIT到GPX转换失败，只上传原始FIT文件")
+                        
+                except Exception as convert_e:
+                    logger.warning(f"FIT到GPX转换过程出错: {convert_e}")
+                    self.debug_print("FIT转换出错，但原始文件已上传成功")
+            
+            return upload_success
+                
+        except Exception as e:
+            logger.error(f"OneDrive上传失败: {e}")
+            self.debug_print(f"上传文件失败: {e}")
+            return False
+    
+    def _determine_activity_name(self, activity_name: str, fingerprint: str, file_path: str) -> str:
+        """确定活动名称"""
+        # 如果提供了活动名称，直接使用
+        if activity_name:
+            return activity_name
+        
+        # 如果提供了fingerprint，从数据库查询活动名
+        if fingerprint:
+            try:
+                db_manager = self._get_database_manager()
+                conn = db_manager._get_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute('SELECT name FROM activity_records WHERE fingerprint = ?', (fingerprint,))
+                result = cursor.fetchone()
+                
+                if result and result['name']:
+                    self.debug_print(f"从数据库查询到活动名: {result['name']}")
+                    return result['name']
+                else:
+                    self.debug_print(f"未在数据库中找到fingerprint {fingerprint}对应的活动名")
+            except Exception as e:
+                self.debug_print(f"从数据库查询活动名失败: {e}")
+        
+        # 如果都没有，使用文件名作为活动名
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        self.debug_print(f"使用文件名作为活动名: {base_name}")
+        return base_name
+    
+    def _generate_friendly_filename(self, activity_name: str, file_ext: str) -> str:
+        """生成友好的文件名"""
+        # 清理活动名中的非法字符
+        import re
+        safe_name = re.sub(r'[<>:"/\\|?*]', '_', activity_name)
+        safe_name = safe_name.strip()
+        
+        # 限制长度
+        if len(safe_name) > 100:
+            safe_name = safe_name[:100]
+        
+        # 如果名称为空，使用默认名称
+        if not safe_name:
+            safe_name = "activity"
+        
+        # 添加文件扩展名
+        if not file_ext.startswith('.'):
+            file_ext = '.' + file_ext
+        
+        return safe_name + file_ext
+    
+    def _upload_single_file(self, file_path: str, remote_path: str, custom_filename: str = None) -> bool:
+        """上传单个文件到OneDrive"""
+        try:
+            file_name = custom_filename or os.path.basename(file_path)
             file_size = os.path.getsize(file_path)
             
             self.debug_print(f"开始上传文件: {file_name}")
@@ -250,19 +430,17 @@ class OneDriveClient:
             
             # 小文件直接上传（< 4MB）
             if file_size < 4 * 1024 * 1024:
-                return self._upload_small_file(file_path, remote_path, headers)
+                return self._upload_small_file_internal(file_path, remote_path, file_name, headers)
             else:
-                return self._upload_large_file(file_path, remote_path, headers)
+                return self._upload_large_file_internal(file_path, remote_path, file_name, headers)
                 
         except Exception as e:
             self.debug_print(f"上传文件失败: {e}")
             logger.error(f"OneDrive上传文件失败: {e}")
             return False
     
-    def _upload_small_file(self, file_path: str, remote_path: str, headers: Dict) -> bool:
+    def _upload_small_file_internal(self, file_path: str, remote_path: str, file_name: str, headers: Dict) -> bool:
         """上传小文件（< 4MB）"""
-        file_name = os.path.basename(file_path)
-        
         # 构建上传URL
         if remote_path == "/":
             url = f"{self.api_base_url}/me/drive/root:/{file_name}:/content"
@@ -294,10 +472,8 @@ class OneDriveClient:
             self.debug_print(f"OneDrive路径: {file_info['webUrl']}")
             return True
     
-    def _upload_large_file(self, file_path: str, remote_path: str, headers: Dict) -> bool:
+    def _upload_large_file_internal(self, file_path: str, remote_path: str, file_name: str, headers: Dict) -> bool:
         """上传大文件（>= 4MB）"""
-        file_name = os.path.basename(file_path)
-        
         # 构建上传会话URL
         if remote_path == "/":
             url = f"{self.api_base_url}/me/drive/root:/{file_name}:/createUploadSession"
@@ -352,6 +528,11 @@ class OneDriveClient:
                     response.raise_for_status()
             
         return True
+    
+    # 保留原有的upload_file方法作为向后兼容
+    def upload_file_legacy(self, file_path: str, remote_path: str = "/Sports-Activities") -> bool:
+        """原有的upload_file方法，保持向后兼容"""
+        return self._upload_single_file(file_path, remote_path)
     
     def download_file(self, file_id: str, local_path: str) -> bool:
         """从OneDrive下载文件"""
