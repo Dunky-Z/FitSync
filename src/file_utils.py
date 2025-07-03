@@ -308,4 +308,22 @@ class FileUtils:
             return None
         except Exception as e:
             logger.error(f"FIT转GPX失败: {e}")
-            return None 
+            return None
+    
+    @staticmethod
+    def is_fit_binary(file_path: str) -> bool:
+        """根据文件头签名判断该文件是否为标准FIT二进制格式
+
+        Strava 某些活动如果最初是 GPX 上传，下载时仍会给 .fit 扩展名，但文件内容其实是 XML。
+        此方法通过检查文件头第 8–11 字节是否为 b'.FIT' 来简单判断。
+        如果判断失败，则认为不是标准 FIT 文件。
+        """
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(14)
+                # FIT 文件在偏移 8~11 字节通常包含字符串 '.FIT'
+                if len(header) >= 12 and header[8:12] == b'.FIT':
+                    return True
+            return False
+        except Exception:
+            return False 

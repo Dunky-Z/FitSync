@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # 获取项目根目录路径
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -539,90 +539,119 @@ class StravaClient:
             print(f"结束时间: {before}")
         
         all_activities = []
-        page = 1
         per_page = 200  # Strava API最大每页200个
         
-        # 获取足够多的活动以便筛选
-        max_pages = 50  # 最多获取50页，避免无限循环
+        # 用于跟踪是否找到了目标时间范围的活动
+        found_target_activities = False
+        consecutive_empty_calls = 0
+        max_consecutive_empty_calls = 3
         
-        while page <= max_pages:
-            try:
-                headers = self._get_headers()
-                params = {
-                    'per_page': per_page,
-                    'page': page
-                }
+        # 使用after参数获取活动，不使用before参数（避免API异常行为）
+        # 在客户端进行时间过滤
+        
+        try:
+            headers = self._get_headers()
+            params = {
+                'per_page': per_page
+            }
+            
+            # 只使用after参数，避免与before参数的冲突
+            if after:
+                params['after'] = int(after.timestamp())
+            
+            # 调试：显示API请求参数
+            print(f"  API请求参数: {params}")
+            if after:
+                print(f"  after时间戳: {int(after.timestamp())} (对应时间: {after})")
+            
+            print(f"获取活动... (批次大小: {batch_size})")
+            response = requests.get(f"{self.base_url}/athlete/activities", 
+                                  headers=headers, params=params)
+            
+            if response.status_code == 200:
+                activities = response.json()
+                print(f"从API获取到{len(activities)}个活动")
                 
-                # 如果有after参数，添加到API请求中
-                if after:
-                    # Strava API使用Unix时间戳
-                    params['after'] = int(after.timestamp())
+                # 添加调试：显示前几个和最后几个活动的时间
+                if activities:
+                    print("  前5个活动的时间:")
+                    for i, activity in enumerate(activities[:5]):
+                        print(f"    {i+1}. {activity['start_date']} - {activity['name']}")
+                    if len(activities) > 5:
+                        print("  最后5个活动的时间:")
+                        for i, activity in enumerate(activities[-5:]):
+                            print(f"    {len(activities)-4+i}. {activity['start_date']} - {activity['name']}")
                 
-                if before:
-                    params['before'] = int(before.timestamp())
+                if not activities:
+                    print("未获取到任何活动")
+                    return []
                 
-                print(f"获取第{page}页活动...")
-                response = requests.get(f"{self.base_url}/athlete/activities", 
-                                      headers=headers, params=params)
+                # 时间过滤和处理
+                filtered_activities = []
+                activities_before_range = 0
+                activities_in_range = 0
+                activities_after_range = 0
                 
-                if response.status_code == 200:
-                    activities = response.json()
-                    print(f"第{page}页获取到{len(activities)}个活动")
+                for activity in activities:
+                    activity_time = datetime.fromisoformat(activity['start_date'].replace('Z', '+00:00'))
                     
-                    if not activities:
-                        print("没有更多活动，停止获取")
-                        break
+                    # 检查时间范围
+                    if after:
+                        # 确保after有时区信息
+                        after_tz = after
+                        if after_tz.tzinfo is None:
+                            after_tz = after_tz.replace(tzinfo=timezone.utc)
+                        if activity_time < after_tz:
+                            activities_before_range += 1
+                            continue
+                            
+                    if before:
+                        # 确保before有时区信息
+                        before_tz = before
+                        if before_tz.tzinfo is None:
+                            before_tz = before_tz.replace(tzinfo=timezone.utc)
+                        if activity_time > before_tz:
+                            activities_after_range += 1
+                            continue
                     
-                    # 时间过滤（双重保险）
-                    filtered_activities = []
-                    for activity in activities:
-                        activity_time = datetime.fromisoformat(activity['start_date'].replace('Z', '+00:00'))
-                        
-                        # 检查时间范围
-                        if after:
-                            # 确保after有时区信息
-                            after_tz = after
-                            if after_tz.tzinfo is None:
-                                after_tz = after_tz.replace(tzinfo=timezone.utc)
-                            if activity_time < after_tz:
-                                continue
-                                
-                        if before:
-                            # 确保before有时区信息
-                            before_tz = before
-                            if before_tz.tzinfo is None:
-                                before_tz = before_tz.replace(tzinfo=timezone.utc)
-                            if activity_time > before_tz:
-                                continue
-                                
-                        filtered_activities.append(activity)
-                    
-                    all_activities.extend(filtered_activities)
-                    print(f"过滤后添加{len(filtered_activities)}个活动，总计{len(all_activities)}个")
+                    activities_in_range += 1
+                    filtered_activities.append(activity)
+                    found_target_activities = True
                     
                     # 如果已经获取足够的活动，停止
-                    if len(all_activities) >= batch_size:
+                    if len(filtered_activities) >= batch_size:
                         break
-                    
-                    # 如果这一页的活动数量少于请求数量，说明没有更多了
-                    if len(activities) < per_page:
-                        print("已获取所有可用活动")
-                        break
-                        
-                    page += 1
-                    
-                elif response.status_code == 401:
-                    # Token可能过期，尝试刷新
-                    if self._refresh_access_token():
-                        continue  # 重试当前页
-                    else:
-                        raise Exception("认证失败，无法刷新token")
+                
+                print(f"  - 时间范围内活动: {activities_in_range}个")
+                if activities_before_range > 0:
+                    print(f"  - 超出时间范围(太早)的活动: {activities_before_range}个")
+                if activities_after_range > 0:
+                    print(f"  - 超出时间范围(太晚)的活动: {activities_after_range}个")
+                
+                all_activities.extend(filtered_activities)
+                print(f"最终获取{len(all_activities)}个符合条件的活动")
+                
+                # 如果没有找到任何目标活动，提供更详细的信息
+                if not found_target_activities and after:
+                    print(f"⚠️  警告：未找到{after}之后的活动")
+                    print(f"   可能的原因：")
+                    print(f"   1. 该时间点之后确实没有活动")
+                    print(f"   2. 需要调整时间范围参数")
+                    print(f"   3. API访问权限或配置问题")
+                
+            elif response.status_code == 401:
+                # Token可能过期，尝试刷新
+                if self._refresh_access_token():
+                    # 重新递归调用
+                    return self.get_activities_for_migration(batch_size, after, before)
                 else:
-                    raise Exception(f"获取活动失败: {response.status_code} - {response.text}")
-                    
-            except Exception as e:
-                logger.error(f"获取第{page}页活动失败: {e}")
-                break
+                    raise Exception("认证失败，无法刷新token")
+            else:
+                raise Exception(f"获取活动失败: {response.status_code} - {response.text}")
+                
+        except Exception as e:
+            logger.error(f"获取活动失败: {e}")
+            return []
         
         # 按时间排序（最老的在前）
         all_activities.sort(key=lambda x: x['start_date'])
@@ -635,5 +664,9 @@ class StravaClient:
             first_activity_time = result[0]['start_date']
             last_activity_time = result[-1]['start_date']
             print(f"活动时间范围: {first_activity_time} 到 {last_activity_time}")
+        elif all_activities:
+            print(f"找到{len(all_activities)}个符合条件的活动，但因批次大小限制只返回前{batch_size}个")
+        else:
+            print("未找到符合条件的活动")
         
         return result 

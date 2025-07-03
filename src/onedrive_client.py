@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any
 from urllib.parse import urlencode, parse_qs, urlparse
 import webbrowser
 import sys
+import shutil
 
 # 获取项目根目录路径
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -274,7 +275,7 @@ class OneDriveClient:
             file_path: 本地文件路径
             activity_name: 活动名称（用于生成友好的文件名）
             fingerprint: 活动指纹（用于从数据库查询活动名）
-            convert_fit_to_gpx: 是否将FIT文件同时转换为GPX上传
+            convert_fit_to_gpx: 是否将FIT文件转换为GPX上传（只上传GPX）
             remote_path: 远程目录路径
         
         Returns:
@@ -295,71 +296,166 @@ class OneDriveClient:
             # 确定活动名称
             final_activity_name = self._determine_activity_name(activity_name, fingerprint, file_path)
             
+            # 获取并打印活动详细信息
+            self._print_activity_details(fingerprint, final_activity_name)
+            
             # 获取文件信息
             file_name = os.path.basename(file_path)
             file_ext = os.path.splitext(file_name)[1].lower()
             
-            upload_success = True
+            # 要上传的文件路径和扩展名
+            final_file_path = file_path
+            final_file_ext = file_ext
+            final_filename = final_activity_name
+            
+            # 默认不清理临时文件
+            should_cleanup_gpx = False
+            
+            # 如果是FIT文件，优先检测实际内容是否为FIT二进制
+            if file_ext == '.fit' and convert_fit_to_gpx:
+                # 延迟导入 FileUtils 避免循环依赖
+                from file_utils import FileUtils
+                # 如果文件内容不是 FIT，则按 GPX 处理
+                if not FileUtils.is_fit_binary(file_path):
+                    self.debug_print("文件扩展名为 .fit，但内容为 XML/GPX，按GPX文件处理 …")
+                    gpx_file_path = file_path.replace('.fit', '.gpx')
+                    try:
+                        shutil.copyfile(file_path, gpx_file_path)
+                    except Exception as copy_e:
+                        logger.warning(f"复制伪FIT文件失败: {copy_e}")
+                        return False
+                    final_file_path = gpx_file_path
+                    final_file_ext = '.gpx'
+                    should_cleanup_gpx = True
+                else:
+                    try:
+                        self.debug_print("检测到FIT文件，转换为GPX格式上传...")
+                        
+                        # 生成GPX文件路径
+                        gpx_file_path = file_path.replace('.fit', '.gpx')
+                        
+                        # 转换FIT到GPX
+                        file_converter = self._get_file_converter()
+                        converted_gpx = file_converter.convert_file(file_path, 'gpx', gpx_file_path)
+                        
+                        if converted_gpx and os.path.exists(converted_gpx):
+                            self.debug_print(f"FIT文件已转换为GPX: {converted_gpx}")
+                            
+                            # 更新上传参数为GPX文件
+                            final_file_path = converted_gpx
+                            final_file_ext = '.gpx'
+                            
+                            # 清理临时GPX文件的标记（稍后清理）
+                            should_cleanup_gpx = True
+                        
+                        else:
+                            self.debug_print("FIT到GPX转换失败，跳过上传")
+                            return False
+                            
+                    except Exception as convert_e:
+                        logger.warning(f"FIT到GPX转换过程出错: {convert_e}")
+                        self.debug_print("FIT转换出错，跳过上传")
+                        return False
+            else:
+                # 非 FIT 文件或无需转换
+                pass
             
             # 生成友好的文件名
-            friendly_file_name = self._generate_friendly_filename(final_activity_name, file_ext)
+            friendly_file_name = self._generate_friendly_filename(final_filename, final_file_ext, fingerprint)
             
-            # 上传原始文件
-            success = self._upload_single_file(file_path, remote_path, friendly_file_name)
+            # 上传文件（只上传GPX文件）
+            success = self._upload_single_file(final_file_path, remote_path, friendly_file_name)
             if success:
-                self.debug_print(f"原始文件 {friendly_file_name} 已成功上传到OneDrive")
+                self.debug_print(f"文件 {friendly_file_name} 已成功上传到OneDrive")
             else:
-                self.debug_print(f"原始文件 {friendly_file_name} 上传失败")
-                upload_success = False
+                self.debug_print(f"文件 {friendly_file_name} 上传失败")
+                return False
             
-            # 如果是FIT文件，同时生成并上传GPX文件
-            if file_ext == '.fit' and convert_fit_to_gpx:
+            # 清理临时GPX文件
+            if should_cleanup_gpx and os.path.exists(final_file_path):
                 try:
-                    self.debug_print("检测到FIT文件，开始生成GPX文件...")
-                    
-                    # 生成GPX文件路径
-                    gpx_file_path = file_path.replace('.fit', '.gpx')
-                    
-                    # 转换FIT到GPX
-                    file_converter = self._get_file_converter()
-                    converted_gpx = file_converter.convert_file(file_path, 'gpx', gpx_file_path)
-                    
-                    if converted_gpx and os.path.exists(converted_gpx):
-                        self.debug_print(f"FIT文件已转换为GPX: {converted_gpx}")
-                        
-                        # 生成GPX文件的友好名称
-                        gpx_friendly_name = self._generate_friendly_filename(final_activity_name, '.gpx')
-                        
-                        # 上传GPX文件
-                        gpx_success = self._upload_single_file(converted_gpx, remote_path, gpx_friendly_name)
-                        
-                        if gpx_success:
-                            self.debug_print(f"GPX文件 {gpx_friendly_name} 已成功上传到OneDrive")
-                        else:
-                            self.debug_print(f"GPX文件上传失败")
-                            # GPX上传失败不影响整体成功状态，因为原始FIT文件已上传
-                        
-                        # 清理临时GPX文件
-                        try:
-                            if os.path.exists(converted_gpx):
-                                os.remove(converted_gpx)
-                                self.debug_print(f"已清理临时GPX文件: {converted_gpx}")
-                        except Exception as cleanup_e:
-                            logger.warning(f"清理临时GPX文件失败: {cleanup_e}")
-                    
-                    else:
-                        self.debug_print("FIT到GPX转换失败，只上传原始FIT文件")
-                        
-                except Exception as convert_e:
-                    logger.warning(f"FIT到GPX转换过程出错: {convert_e}")
-                    self.debug_print("FIT转换出错，但原始文件已上传成功")
+                    os.remove(final_file_path)
+                    self.debug_print(f"已清理临时GPX文件: {final_file_path}")
+                except Exception as cleanup_e:
+                    logger.warning(f"清理临时GPX文件失败: {cleanup_e}")
             
-            return upload_success
+            return True
                 
         except Exception as e:
             logger.error(f"OneDrive上传失败: {e}")
             self.debug_print(f"上传文件失败: {e}")
             return False
+    
+    def _print_activity_details(self, fingerprint: str, activity_name: str) -> None:
+        """打印活动详细信息（日期、距离、时长）"""
+        if not fingerprint:
+            print(f"📅 上传活动: {activity_name} (无详细信息)")
+            return
+        
+        try:
+            db_manager = self._get_database_manager()
+            conn = db_manager._get_connection()
+            cursor = conn.cursor()
+            
+            # 查询活动详细信息
+            cursor.execute('''
+                SELECT name, start_time, distance, duration, elapsed_time 
+                FROM activity_records 
+                WHERE fingerprint = ?
+            ''', (fingerprint,))
+            result = cursor.fetchone()
+            
+            if result:
+                name = result['name'] or activity_name
+                start_time = result['start_time']
+                distance = result['distance']
+                duration = result['duration'] or result['elapsed_time']
+                
+                # 格式化日期
+                if start_time:
+                    from datetime import datetime
+                    try:
+                        # 尝试解析ISO格式时间
+                        if 'T' in start_time:
+                            dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                            date_str = dt.strftime('%Y-%m-%d')
+                        else:
+                            date_str = start_time[:10]  # 取前10个字符作为日期
+                    except:
+                        date_str = start_time[:10] if start_time else "未知日期"
+                else:
+                    date_str = "未知日期"
+                
+                # 格式化距离
+                if distance:
+                    distance_km = round(distance / 1000, 2) if distance > 1000 else round(distance, 2)
+                    distance_str = f"{distance_km} km"
+                else:
+                    distance_str = "未知距离"
+                
+                # 格式化时长
+                if duration:
+                    hours = duration // 3600
+                    minutes = (duration % 3600) // 60
+                    seconds = duration % 60
+                    if hours > 0:
+                        duration_str = f"{hours}h {minutes}m {seconds}s"
+                    elif minutes > 0:
+                        duration_str = f"{minutes}m {seconds}s"
+                    else:
+                        duration_str = f"{seconds}s"
+                else:
+                    duration_str = "未知时长"
+                
+                print(f"📅 上传活动: {name}")
+                print(f"   日期: {date_str}")
+                print(f"   距离: {distance_str}")
+                print(f"   时长: {duration_str}")
+            else:
+                print(f"📅 上传活动: {activity_name} (数据库中未找到详细信息)")
+                
+        except Exception as e:
+            print(f"📅 上传活动: {activity_name} (详细信息获取失败: {e})")
     
     def _determine_activity_name(self, activity_name: str, fingerprint: str, file_path: str) -> str:
         """确定活动名称"""
@@ -390,7 +486,7 @@ class OneDriveClient:
         self.debug_print(f"使用文件名作为活动名: {base_name}")
         return base_name
     
-    def _generate_friendly_filename(self, activity_name: str, file_ext: str) -> str:
+    def _generate_friendly_filename(self, activity_name: str, file_ext: str, fingerprint: str = None) -> str:
         """生成友好的文件名"""
         # 清理活动名中的非法字符
         import re
@@ -405,6 +501,15 @@ class OneDriveClient:
         if not safe_name:
             safe_name = "activity"
         
+        # 生成唯一后缀：优先使用 fingerprint（取前8位），否则使用当前时间戳
+        from datetime import datetime
+        if fingerprint:
+            uniq = fingerprint[:8]
+        else:
+            uniq = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+
+        safe_name = f"{safe_name}_{uniq}"
+
         # 添加文件扩展名
         if not file_ext.startswith('.'):
             file_ext = '.' + file_ext

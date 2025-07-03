@@ -206,6 +206,7 @@ pyrightconfig.json
 
 activity_cache/
 **/sync_database.db
+**/sync_database.db.bak
 **/sync_database.json.backup
 
 # Garmin会话文件 (包含敏感的认证信息)

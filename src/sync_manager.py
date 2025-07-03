@@ -212,8 +212,15 @@ class SyncManager:
     
     def set_migration_start_time(self, sync_direction: str, start_time: str) -> None:
         """设置历史迁移的起始时间"""
+        # 写入新的起始时间
         self.db_manager.set_sync_config(f'migration_start_time_{sync_direction}', start_time)
-        self.debug_print(f"设置{sync_direction}迁移起始时间: {start_time}")
+
+        # 同时清空历史迁移进度，确保立即生效
+        progress_key = f'migration_progress_{sync_direction}'
+        # 将进度设置为空字符串（或可选地删除记录），在读取时视为不存在
+        self.db_manager.set_sync_config(progress_key, '')
+
+        self.debug_print(f"设置{sync_direction}迁移起始时间: {start_time}，并已重置进度")
     
     def update_migration_progress(self, platform_or_direction: str, latest_activity_time: datetime, 
                                  sync_direction: str = None) -> None:
