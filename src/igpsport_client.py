@@ -37,17 +37,21 @@ class IGPSportClient:
         try:
             # 尝试使用已保存的token
             saved_token = self._get_saved_token()
-            if saved_token:
-                return self.test_token(saved_token)
+            if saved_token and self.test_token(saved_token):
+                return True
             
-            # 如果没有token，尝试获取凭据
+            # 如果token测试失败或不存在，尝试使用保存的凭据重新登录
             if self.is_configured():
                 config = self.config_manager.get_platform_config("igpsport")
                 username = config.get("username")
                 password = config.get("password")
                 if username and password:
+                    self.debug_print("Token无效或不存在，使用保存的凭据重新登录...")
                     token = self.login(username, password)
-                    return bool(token)
+                    if token:
+                        # 登录成功，token已在login方法中保存到配置文件
+                        self.debug_print("重新登录成功，Token已更新")
+                        return True
             
             return False
         except Exception as e:
@@ -484,18 +488,18 @@ class IGPSportClient:
             self.debug_print(f"Token测试异常: {e}")
             return False
     
-    def get_oss_token(self, login_token: str) -> dict:
+    def get_oss_token(self, access_token: str) -> dict:
         """获取阿里云OSS临时凭证"""
         self.debug_print("获取OSS上传凭证...")
         
         url = "https://prod.zh.igpsport.com/service/mobile/api/AliyunService/GetOssTokenForApp"
         headers = {
-            'Authorization': f'Bearer {login_token}',
+            'Authorization': f'Bearer {access_token}',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         
         self.debug_print(f"请求URL: {url}")
-        self.debug_print(f"Authorization: Bearer {login_token[:20]}...")
+        self.debug_print(f"Authorization: Bearer {access_token[:20]}...")
         
         response = requests.get(url, headers=headers)
         
@@ -591,7 +595,7 @@ class IGPSportClient:
             self.debug_print(f"  - BucketName: {oss_credentials.get('bucketName', 'Missing')}")
             raise
     
-    def notify_server(self, login_token: str, file_name: str, oss_name: str) -> None:
+    def notify_server(self, access_token: str, file_name: str, oss_name: str) -> None:
         """通知IGPSport服务器文件已上传"""
         self.debug_print("通知IGPSport服务器...")
         
@@ -603,7 +607,7 @@ class IGPSportClient:
         }
         
         headers = {
-            'Authorization': f'Bearer {login_token}',
+            'Authorization': f'Bearer {access_token}',
             'Content-Type': 'application/json',
             'Referer': 'https://app.zh.igpsport.com/',
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
@@ -611,7 +615,7 @@ class IGPSportClient:
         
         self.debug_print(f"通知URL: {url}")
         self.debug_print(f"发送数据: {data}")
-        self.debug_print(f"使用Token: {login_token[:20]}...")
+        self.debug_print(f"使用Token: {access_token[:20]}...")
         
         response = requests.post(url, json=data, headers=headers)
         

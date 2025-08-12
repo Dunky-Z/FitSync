@@ -26,7 +26,7 @@ class ConfigManager:
                 "cookie": ""
             },
             "igpsport": {
-                "login_token": "",
+                "access_token": "",
                 "username": "",
                 "password": ""
             },
@@ -126,7 +126,16 @@ class ConfigManager:
                 with open(old_igpsport_cookie, 'r', encoding='utf-8') as f:
                     token = f.read().strip()
                     if token:
-                        config["igpsport"]["login_token"] = token
+                        config["igpsport"]["access_token"] = token
+            
+            # 迁移login_token到access_token
+            if "login_token" in config["igpsport"]:
+                login_token = config["igpsport"]["login_token"]
+                # 如果access_token为空且login_token不为空，则迁移
+                if not config["igpsport"].get("access_token") and login_token:
+                    config["igpsport"]["access_token"] = login_token
+                # 删除login_token字段
+                del config["igpsport"]["login_token"]
             
             # 保存迁移后的配置
             self.save_config(config)
@@ -143,7 +152,7 @@ class ConfigManager:
                    config.get("client_secret") != "your_client_secret_here" and
                    config.get("refresh_token") != "your_refresh_token_here")
         elif platform == "igpsport":
-            return bool(config.get("login_token") or 
+            return bool(config.get("access_token") or 
                        (config.get("username") and config.get("password")))
         elif platform == "garmin":
             return bool(config.get("username") and config.get("password"))
