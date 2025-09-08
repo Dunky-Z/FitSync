@@ -95,7 +95,9 @@ class StravaClient:
             'Content-Type': 'application/json'
         }
     
-    def get_activities(self, limit: int = 30, page: int = 1) -> List[Dict]:
+    def get_activities(self, limit: int = 30, page: int = 1, 
+                     after: Optional[datetime] = None, 
+                     before: Optional[datetime] = None) -> List[Dict]:
         """获取活动列表"""
         try:
             headers = self._get_headers()
@@ -103,6 +105,12 @@ class StravaClient:
                 'per_page': min(limit, 200),  # Strava限制每页最多200
                 'page': page
             }
+            
+            # 添加时间参数到API请求中
+            if after:
+                params['after'] = int(after.timestamp())
+            if before:
+                params['before'] = int(before.timestamp())
             
             print(f"获取Strava活动列表，限制: {limit}")
             response = requests.get(f"{self.base_url}/athlete/activities", 
@@ -138,45 +146,31 @@ class StravaClient:
         """分批获取活动"""
         all_activities = []
         page = 1
-        per_page = min(30, total_limit)
+        per_page = min(200, total_limit)  # 使用更大的页面大小，减少请求次数
         
         while len(all_activities) < total_limit:
             remaining = total_limit - len(all_activities)
             current_limit = min(per_page, remaining)
             
             print(f"获取第{page}页活动，每页{current_limit}个")
-            activities = self.get_activities(limit=current_limit, page=page)
+            # 直接在API请求中使用时间参数，避免客户端过滤
+            activities = self.get_activities(limit=current_limit, page=page, after=after, before=before)
             
             if not activities:
+                print("没有更多活动，停止获取")
                 break
             
-            # 时间过滤
-            filtered_activities = []
-            for activity in activities:
-                activity_time = datetime.fromisoformat(activity['start_date'].replace('Z', '+00:00'))
-                
-                if after:
-                    # 确保after有时区信息
-                    after_tz = after
-                    if after_tz.tzinfo is None:
-                        after_tz = after_tz.replace(tzinfo=timezone.utc)
-                    if activity_time < after_tz:
-                        continue
-                        
-                if before:
-                    # 确保before有时区信息
-                    before_tz = before
-                    if before_tz.tzinfo is None:
-                        before_tz = before_tz.replace(tzinfo=timezone.utc)
-                    if activity_time > before_tz:
-                        continue
-                        
-                filtered_activities.append(activity)
-            
-            all_activities.extend(filtered_activities)
+            # 由于API已经按时间过滤，这里不需要再次过滤
+            all_activities.extend(activities)
             
             # 如果这一页的活动数量少于请求数量，说明没有更多了
             if len(activities) < current_limit:
+                print("已获取所有可用活动")
+                break
+                
+            # 如果已经获取足够的活动，停止
+            if len(all_activities) >= total_limit:
+                print(f"已获取足够的活动数量: {len(all_activities)}")
                 break
                 
             page += 1
@@ -399,81 +393,103 @@ class StravaClient:
             return None
     
     def _try_download_with_cookie(self, url: str, activity_id: str, cookie: str, 
-                                  activity_name: Optional[str] = None) -> Tuple[bool, Optional[str]]:
-        """尝试使用Cookie下载文件"""
+                                  activity_name: Optional[str] = None, max_retries: int = 3) -> Tuple[bool, Optional[str]]:
+        """尝试使用Cookie下载文件，支持重试机制处理202状态码"""
         headers = {
             'Cookie': cookie,
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         
-        try:
-            self.debug_print("发送下载请求...")
-            response = requests.get(url, headers=headers, timeout=30)
-            
-            self.debug_print(f"响应状态码: {response.status_code}")
-            self.debug_print(f"Content-Type: {response.headers.get('Content-Type', 'Unknown')}")
-            self.debug_print(f"Content-Length: {response.headers.get('Content-Length', 'Unknown')}")
-            
-            if response.status_code == 200:
-                content_type = response.headers.get('Content-Type', '').lower()
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    wait_time = 2 ** attempt  # 指数退避：2, 4, 8秒
+                    self.debug_print(f"第{attempt + 1}次重试，等待{wait_time}秒...")
+                    time.sleep(wait_time)
                 
-                # 检查是否返回了HTML页面（表示没有原始文件）
-                if 'text/html' in content_type:
-                    self.debug_print("返回HTML页面，活动可能没有原始文件")
+                self.debug_print(f"发送下载请求（第{attempt + 1}次尝试）...")
+                response = requests.get(url, headers=headers, timeout=30)
+                
+                self.debug_print(f"响应状态码: {response.status_code}")
+                self.debug_print(f"Content-Type: {response.headers.get('Content-Type', 'Unknown')}")
+                self.debug_print(f"Content-Length: {response.headers.get('Content-Length', 'Unknown')}")
+                
+                if response.status_code == 200:
+                    content_type = response.headers.get('Content-Type', '').lower()
                     
-                    # 检查响应内容确认是否为正常的Strava页面
-                    response_preview = response.text[:200] if response.text else ""
-                    self.debug_print(f"响应内容开头: {response_preview}")
+                    # 检查是否返回了HTML页面（表示没有原始文件）
+                    if 'text/html' in content_type:
+                        self.debug_print("返回HTML页面，活动可能没有原始文件")
+                        
+                        # 检查响应内容确认是否为正常的Strava页面
+                        response_preview = response.text[:200] if response.text else ""
+                        self.debug_print(f"响应内容开头: {response_preview}")
+                        
+                        # 如果是正常的Strava页面（不是错误页面），说明活动没有原始文件
+                        if any(indicator in response.text.lower() for indicator in [
+                            'strava', 'activity', 'manual', '手动', 'no file', 'not available'
+                        ]):
+                            self.debug_print("确认为手动创建的活动，没有原始文件")
+                            print(f"活动 '{activity_name or activity_id}' 是手动创建的，跳过下载")
+                            return False, None  # 返回False表示没有文件可下载，不是Cookie问题
+                        else:
+                            # 如果页面内容异常，可能是Cookie问题
+                            self.debug_print("HTML页面异常，可能是Cookie问题")
+                            print("Cookie可能已过期，请重新输入Cookie")
+                            return True, None  # 返回True表示需要重新输入Cookie
                     
-                    # 如果是正常的Strava页面（不是错误页面），说明活动没有原始文件
-                    if any(indicator in response.text.lower() for indicator in [
-                        'strava', 'activity', 'manual', '手动', 'no file', 'not available'
-                    ]):
-                        self.debug_print("确认为手动创建的活动，没有原始文件")
-                        print(f"活动 '{activity_name or activity_id}' 是手动创建的，跳过下载")
-                        return False, None  # 返回False表示没有文件可下载，不是Cookie问题
+                    # 检查是否为有效的文件格式
+                    valid_content_types = [
+                        'application/octet-stream',
+                        'application/vnd.ant.fit',
+                        'application/gpx+xml',
+                        'application/tcx+xml',
+                        'text/xml',
+                        'application/xml'
+                    ]
+                    
+                    is_valid_file = any(ct in content_type for ct in valid_content_types)
+                    
+                    if is_valid_file or len(response.content) > 1000:  # 假设有效文件至少1KB
+                        # 保存文件
+                        return self._save_downloaded_file(response, activity_name or f"activity_{activity_id}", content_type)
                     else:
-                        # 如果页面内容异常，可能是Cookie问题
-                        self.debug_print("HTML页面异常，可能是Cookie问题")
-                        print("Cookie可能已过期，请重新输入Cookie")
-                        return True, None  # 返回True表示需要重新输入Cookie
-                
-                # 检查是否为有效的文件格式
-                valid_content_types = [
-                    'application/octet-stream',
-                    'application/vnd.ant.fit',
-                    'application/gpx+xml',
-                    'application/tcx+xml',
-                    'text/xml',
-                    'application/xml'
-                ]
-                
-                is_valid_file = any(ct in content_type for ct in valid_content_types)
-                
-                if is_valid_file or len(response.content) > 1000:  # 假设有效文件至少1KB
-                    # 保存文件
-                    return self._save_downloaded_file(response, activity_name or f"activity_{activity_id}", content_type)
-                else:
-                    self.debug_print(f"未知的文件格式，Content-Type: {content_type}")
+                        self.debug_print(f"未知的文件格式，Content-Type: {content_type}")
+                        return False, None
+                        
+                elif response.status_code == 404:
+                    self.debug_print("活动不存在或没有原始文件")
+                    print(f"活动 {activity_id} 不存在或没有原始文件")
                     return False, None
                     
-            elif response.status_code == 404:
-                self.debug_print("活动不存在或没有原始文件")
-                print(f"活动 {activity_id} 不存在或没有原始文件")
-                return False, None
-                
-            elif response.status_code in [401, 403]:
-                self.debug_print("认证失败，Cookie可能已过期")
-                print("Cookie已过期，请重新输入")
+                elif response.status_code == 202:
+                    self.debug_print(f"文件正在准备中（状态码202），第{attempt + 1}次尝试")
+                    if attempt < max_retries - 1:
+                        print(f"活动 {activity_id} 的文件正在准备中，将在{2 ** (attempt + 1)}秒后重试...")
+                        continue  # 继续下一次循环，进行重试
+                    else:
+                        self.debug_print("已达到最大重试次数，文件仍在准备中")
+                        print(f"活动 {activity_id} 的文件准备时间过长，请稍后手动重试")
+                        return True, None
+                    
+                elif response.status_code in [401, 403]:
+                    self.debug_print("认证失败，Cookie可能已过期")
+                    print("Cookie已过期，请重新输入")
+                    return True, None
+                    
+                else:
+                    self.debug_print(f"下载失败，状态码: {response.status_code}")
+                    return True, None
+                    
+            except Exception as e:
+                self.debug_print(f"下载请求异常: {e}")
+                if attempt < max_retries - 1:
+                    continue
                 return True, None
-                
-            else:
-                self.debug_print(f"下载失败，状态码: {response.status_code}")
-                return True, None
-                
-        except Exception as e:
-            self.debug_print(f"下载请求异常: {e}")
-            return True, None
+        
+        # 如果所有重试都失败了
+        self.debug_print("所有重试尝试都失败")
+        return True, None
     
     def _save_downloaded_file(self, response: requests.Response, base_filename: str, content_type: str) -> Tuple[bool, Optional[str]]:
         """保存下载的文件"""
@@ -538,135 +554,25 @@ class StravaClient:
         if before:
             print(f"结束时间: {before}")
         
-        all_activities = []
-        per_page = 200  # Strava API最大每页200个
+        # 直接使用优化后的get_activities_in_batches方法
+        activities = self.get_activities_in_batches(
+            total_limit=batch_size,
+            after=after,
+            before=before
+        )
         
-        # 用于跟踪是否找到了目标时间范围的活动
-        found_target_activities = False
-        consecutive_empty_calls = 0
-        max_consecutive_empty_calls = 3
-        
-        # 使用after参数获取活动，不使用before参数（避免API异常行为）
-        # 在客户端进行时间过滤
-        
-        try:
-            headers = self._get_headers()
-            params = {
-                'per_page': per_page
-            }
-            
-            # 只使用after参数，避免与before参数的冲突
-            if after:
-                params['after'] = int(after.timestamp())
-            
-            # 调试：显示API请求参数
-            print(f"  API请求参数: {params}")
-            if after:
-                print(f"  after时间戳: {int(after.timestamp())} (对应时间: {after})")
-            
-            print(f"获取活动... (批次大小: {batch_size})")
-            response = requests.get(f"{self.base_url}/athlete/activities", 
-                                  headers=headers, params=params)
-            
-            if response.status_code == 200:
-                activities = response.json()
-                print(f"从API获取到{len(activities)}个活动")
-                
-                # 添加调试：显示前几个和最后几个活动的时间
-                if activities:
-                    print("  前5个活动的时间:")
-                    for i, activity in enumerate(activities[:5]):
-                        print(f"    {i+1}. {activity['start_date']} - {activity['name']}")
-                    if len(activities) > 5:
-                        print("  最后5个活动的时间:")
-                        for i, activity in enumerate(activities[-5:]):
-                            print(f"    {len(activities)-4+i}. {activity['start_date']} - {activity['name']}")
-                
-                if not activities:
-                    print("未获取到任何活动")
-                    return []
-                
-                # 时间过滤和处理
-                filtered_activities = []
-                activities_before_range = 0
-                activities_in_range = 0
-                activities_after_range = 0
-                
-                for activity in activities:
-                    activity_time = datetime.fromisoformat(activity['start_date'].replace('Z', '+00:00'))
-                    
-                    # 检查时间范围
-                    if after:
-                        # 确保after有时区信息
-                        after_tz = after
-                        if after_tz.tzinfo is None:
-                            after_tz = after_tz.replace(tzinfo=timezone.utc)
-                        if activity_time < after_tz:
-                            activities_before_range += 1
-                            continue
-                            
-                    if before:
-                        # 确保before有时区信息
-                        before_tz = before
-                        if before_tz.tzinfo is None:
-                            before_tz = before_tz.replace(tzinfo=timezone.utc)
-                        if activity_time > before_tz:
-                            activities_after_range += 1
-                            continue
-                    
-                    activities_in_range += 1
-                    filtered_activities.append(activity)
-                    found_target_activities = True
-                    
-                    # 如果已经获取足够的活动，停止
-                    if len(filtered_activities) >= batch_size:
-                        break
-                
-                print(f"  - 时间范围内活动: {activities_in_range}个")
-                if activities_before_range > 0:
-                    print(f"  - 超出时间范围(太早)的活动: {activities_before_range}个")
-                if activities_after_range > 0:
-                    print(f"  - 超出时间范围(太晚)的活动: {activities_after_range}个")
-                
-                all_activities.extend(filtered_activities)
-                print(f"最终获取{len(all_activities)}个符合条件的活动")
-                
-                # 如果没有找到任何目标活动，提供更详细的信息
-                if not found_target_activities and after:
-                    print(f"⚠️  警告：未找到{after}之后的活动")
-                    print(f"   可能的原因：")
-                    print(f"   1. 该时间点之后确实没有活动")
-                    print(f"   2. 需要调整时间范围参数")
-                    print(f"   3. API访问权限或配置问题")
-                
-            elif response.status_code == 401:
-                # Token可能过期，尝试刷新
-                if self._refresh_access_token():
-                    # 重新递归调用
-                    return self.get_activities_for_migration(batch_size, after, before)
-                else:
-                    raise Exception("认证失败，无法刷新token")
-            else:
-                raise Exception(f"获取活动失败: {response.status_code} - {response.text}")
-                
-        except Exception as e:
-            logger.error(f"获取活动失败: {e}")
+        if not activities:
+            print("未找到符合条件的活动")
             return []
         
         # 按时间排序（最老的在前）
-        all_activities.sort(key=lambda x: x['start_date'])
+        activities.sort(key=lambda x: x['start_date'])
         
-        # 只返回需要的数量
-        result = all_activities[:batch_size]
-        print(f"最终返回{len(result)}个活动用于迁移")
+        print(f"最终返回{len(activities)}个活动用于迁移")
         
-        if result:
-            first_activity_time = result[0]['start_date']
-            last_activity_time = result[-1]['start_date']
+        if activities:
+            first_activity_time = activities[0]['start_date']
+            last_activity_time = activities[-1]['start_date']
             print(f"活动时间范围: {first_activity_time} 到 {last_activity_time}")
-        elif all_activities:
-            print(f"找到{len(all_activities)}个符合条件的活动，但因批次大小限制只返回前{batch_size}个")
-        else:
-            print("未找到符合条件的活动")
         
-        return result 
+        return activities 
