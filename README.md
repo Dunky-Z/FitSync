@@ -246,3 +246,4 @@ python src/main_sync.py --cleanup-cache
 - [Garmin Connect IQ](https://developer.garmin.com/)
 - [Microsoft Graph API](https://docs.microsoft.com/en-us/graph/)
 - [Intervals.icu API](https://intervals.icu/api)
+- [mywhoosh to garmin](https://github.com/mvace/mywhoosh_to_garmin)

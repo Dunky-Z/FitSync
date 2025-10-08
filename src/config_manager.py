@@ -38,6 +38,10 @@ class ConfigManager:
                 "oauth_token": "",
                 "oauth_token_secret": ""
             },
+            "mywhoosh": {
+                "username": "",
+                "password": ""
+            },
             "onedrive": {
                 "client_id": "your_client_id_here",
                 "client_secret": "your_client_secret_here",
@@ -155,6 +159,8 @@ class ConfigManager:
             return bool(config.get("access_token") or 
                        (config.get("username") and config.get("password")))
         elif platform == "garmin":
+            return bool(config.get("username") and config.get("password"))
+        elif platform == "mywhoosh":
             return bool(config.get("username") and config.get("password"))
         elif platform == "onedrive":
             return (config.get("client_id") != "your_client_id_here" and 

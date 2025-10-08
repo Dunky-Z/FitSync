@@ -342,7 +342,6 @@ def check_prerequisites(sync_engine: BidirectionalSync, directions: list = None)
                 issues.append("IGPSport连接失败")
         except Exception as e:
             issues.append(f"IGPSport配置问题: {e}")
-    
     # 检查Intervals.icu配置（如果需要）
     if "intervals_icu" in required_platforms:
         try:
