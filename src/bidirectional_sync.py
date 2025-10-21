@@ -12,7 +12,6 @@ from garmin_sync_client import GarminSyncClient
 from onedrive_client import OneDriveClient
 from igpsport_client import IGPSportClient
 from intervals_icu_client import IntervalsIcuClient
-from file_converter import FileConverter
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,6 @@ class BidirectionalSync:
         self.onedrive_client = OneDriveClient(config_manager, debug)
         self.igpsport_client = IGPSportClient(config_manager, debug)
         self.intervals_icu_client = IntervalsIcuClient(config_manager, debug)
-        self.file_converter = FileConverter()
         
         # 支持的同步方向
         self.sync_directions = [

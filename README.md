@@ -5,24 +5,38 @@
 ## 主要特性
 
 ### 双向同步功能
+
 - **多平台支持**：Strava、Garmin Connect、OneDrive、IGPSport、Intervals.icu
 - **智能活动匹配**：基于时间、运动类型、距离、时长的多维度匹配算法
 - **增量同步**：只同步新增活动，避免重复处理
 - **API限制管理**：智能管理Strava API调用限制（每日180次，每15分钟90次）
 - **历史迁移模式**：支持历史活动的批量迁移
 
+| Source   \ Target | **Strava**    | **Garmin Global** | **Garmin CN** | **IGPSport** | **Intervals.icu** | **OneDrive** |
+| ----------------- | ------------- | ----------------- | ------------- | ------------ | ----------------- | ------------ |
+| **Strava**        | x             | 🔁 Bi-dir         | ❌           | ➡️ Single-dir | ❌               | ➡️ Single-dir|
+| **Garmin Global** | 🔁 Bi-dir     | x                 | ❌           | ➡️ Single-dir | ❌               | ➡️ Single-dir|
+| **Garmin CN**     | ❌            | ❌                | x            | ❌            | ❌               | ❌           |
+| **IGPSport**      | ❌            | ❌                | ❌           | x             | ➡️ Single-dir    | ❌          |
+| **Intervals.icu** | ❌            | ❌                | ❌           | ❌            | x                | ❌           |
+| **OneDrive**      | ❌            | ❌                | ❌           | ❌            | ❌               | x            |
+| **Others**        | ❌            | ❌                | ❌           | ❌            | ❌               | ❌           |
+
 ### SQLite数据库系统
+
 - **高性能存储**：使用SQLite替代JSON文件，提供更好的查询性能
 - **数据完整性**：ACID事务保证数据安全
 - **自动迁移**：从旧的JSON格式无缝迁移到SQLite
 - **智能缓存**：本地文件缓存管理，避免重复下载
 
 ### 智能匹配算法
+
 - **多维度匹配**：时间（5分钟容差）、运动类型、距离（5%容差）、时长（10%容差）
 - **置信度评分**：0.0-1.0评分系统，确保匹配准确性
 - **运动类型标准化**：自动识别相似运动类型（如跑步、越野跑、跑步机跑步）
 
 ### 文件格式转换
+
 - **多格式支持**：FIT、TCX、GPX格式之间的转换
 - **自动转换**：上传时自动根据目标平台需求转换格式
 - **批量转换**：支持批量文件格式转换
@@ -30,18 +44,21 @@
 ## 快速开始
 
 ### 环境要求
+
 - Python 3.7+
 - 操作系统：Windows、macOS、Linux
 
 ### 安装依赖
+
 ```bash
 pip install -r requirements.txt
 ```
 
 ### 配置说明
+
 项目使用统一的配置文件 `.app_config.json` 管理所有平台的配置信息。
 
-#### 支持的平台配置：
+#### 支持的平台配置
 
 1. **Strava API配置**
    - client_id：Strava应用ID
@@ -69,11 +86,13 @@ pip install -r requirements.txt
 ### 运行程序
 
 #### 交互式模式
+
 ```bash
 python src/main_sync.py
 ```
 
 #### 自动化模式
+
 ```bash
 # 单向同步
 python src/main_sync.py --auto --directions strava_to_garmin --batch-size 10
@@ -86,6 +105,7 @@ python src/main_sync.py --auto --directions strava_to_garmin --batch-size 20 --m
 ```
 
 #### 文件转换工具
+
 ```bash
 # 交互式转换
 python src/file_converter.py --interactive
@@ -100,6 +120,7 @@ python src/file_converter.py --batch /path/to/files gpx
 ## 同步方向支持
 
 ### 当前支持的同步方向
+
 - **Strava → Garmin Connect**：将Strava活动同步到Garmin
 - **Garmin Connect → Strava**：将Garmin活动同步到Strava
 - **Strava → OneDrive**：将Strava活动文件备份到OneDrive
@@ -112,6 +133,7 @@ python src/file_converter.py --batch /path/to/files gpx
 ## 数据库架构
 
 ### SQLite表结构
+
 ```sql
 -- 活动记录表
 CREATE TABLE activity_records (
@@ -174,7 +196,9 @@ CREATE TABLE api_limits (
 ```
 
 ### 数据迁移
+
 系统会自动检测旧的JSON数据库文件并迁移到SQLite：
+
 ```bash
 # 自动迁移（首次运行时）
 python src/main_sync.py
@@ -186,6 +210,7 @@ python tests/test_database_migration.py
 ## 命令行参数
 
 ### main_sync.py 参数
+
 ```bash
 python src/main_sync.py [选项]
 
@@ -209,6 +234,7 @@ python src/main_sync.py [选项]
 ```
 
 ### file_converter.py 参数
+
 ```bash
 python src/file_converter.py [选项] [输入] [格式]
 
@@ -224,6 +250,7 @@ python src/file_converter.py [选项] [输入] [格式]
 ```
 
 ### 调试模式
+
 ```bash
 # 启用调试输出
 python src/main_sync.py --debug
@@ -240,6 +267,7 @@ python src/main_sync.py --cleanup-cache
 本项目采用MIT许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
 
 ## 相关链接
+
 - [Yesaye/tampermonkey-script: 油猴脚本](https://github.com/Yesaye/tampermonkey-script)
 - [tyb311/SportTrails: 运动轨迹多平台管理软件【XOSS-iGPSPORT】](https://github.com/tyb311/SportTrails)
 - [Strava API文档](https://developers.strava.com/)

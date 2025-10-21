@@ -98,47 +98,96 @@ class StravaClient:
     def get_activities(self, limit: int = 30, page: int = 1, 
                      after: Optional[datetime] = None, 
                      before: Optional[datetime] = None) -> List[Dict]:
-        """获取活动列表"""
-        try:
-            headers = self._get_headers()
-            params = {
-                'per_page': min(limit, 200),  # Strava限制每页最多200
-                'page': page
-            }
-            
-            # 添加时间参数到API请求中
-            if after:
-                params['after'] = int(after.timestamp())
-            if before:
-                params['before'] = int(before.timestamp())
-            
-            print(f"获取Strava活动列表，限制: {limit}")
-            response = requests.get(f"{self.base_url}/athlete/activities", 
-                                  headers=headers, params=params)
-            print(f"活动列表响应状态码: {response.status_code}")
-            
-            if response.status_code == 200:
-                activities = response.json()
-                print(f"成功获取{len(activities)}个活动")
-                return activities
-            elif response.status_code == 401:
-                # Token可能过期，尝试刷新
-                if self._refresh_access_token():
-                    headers = self._get_headers()
-                    response = requests.get(f"{self.base_url}/athlete/activities", 
-                                          headers=headers, params=params)
-                    if response.status_code == 200:
-                        activities = response.json()
-                        print(f"重试后成功获取{len(activities)}个活动")
-                        return activities
+        """获取活动列表，支持重试机制"""
+        max_retries = 3
+        retry_delay = 5  # 初始重试延迟（秒）
+        
+        for attempt in range(max_retries):
+            try:
+                headers = self._get_headers()
+                params = {
+                    'per_page': min(limit, 200),  # Strava限制每页最多200
+                    'page': page
+                }
                 
-                raise Exception(f"认证失败: {response.text}")
-            else:
-                raise Exception(f"获取活动失败: {response.status_code} - {response.text}")
+                # 添加时间参数到API请求中
+                if after:
+                    params['after'] = int(after.timestamp())
+                if before:
+                    params['before'] = int(before.timestamp())
                 
-        except Exception as e:
-            logger.error(f"获取Strava活动失败: {e}")
-            return []
+                if attempt > 0:
+                    print(f"第{attempt + 1}次尝试获取活动列表...")
+                else:
+                    print(f"获取Strava活动列表，限制: {limit}")
+                    
+                response = requests.get(f"{self.base_url}/athlete/activities", 
+                                      headers=headers, params=params, timeout=30)
+                print(f"活动列表响应状态码: {response.status_code}")
+                
+                if response.status_code == 200:
+                    activities = response.json()
+                    print(f"成功获取{len(activities)}个活动")
+                    return activities
+                    
+                elif response.status_code == 401:
+                    # Token可能过期，尝试刷新
+                    if self._refresh_access_token():
+                        headers = self._get_headers()
+                        response = requests.get(f"{self.base_url}/athlete/activities", 
+                                              headers=headers, params=params, timeout=30)
+                        if response.status_code == 200:
+                            activities = response.json()
+                            print(f"重试后成功获取{len(activities)}个活动")
+                            return activities
+                    
+                    raise Exception(f"认证失败: {response.text}")
+                    
+                elif response.status_code == 429:
+                    # 速率限制
+                    retry_after = int(response.headers.get('Retry-After', retry_delay * (attempt + 1)))
+                    print(f"⚠️  达到API速率限制，将在{retry_after}秒后重试...")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_after)
+                        continue
+                    else:
+                        raise Exception("API速率限制，请稍后再试")
+                        
+                elif response.status_code in [500, 502, 503, 504, 597]:
+                    # 服务器错误或临时不可用
+                    error_msg = "Strava服务暂时不可用" if response.status_code == 597 else f"服务器错误 {response.status_code}"
+                    
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delay * (attempt + 1)
+                        print(f"⚠️  {error_msg}，将在{wait_time}秒后重试（剩余{max_retries - attempt - 1}次）...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        raise Exception(f"{error_msg}，已重试{max_retries}次")
+                else:
+                    raise Exception(f"获取活动失败: {response.status_code} - {response.text[:200]}")
+                    
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    wait_time = retry_delay * (attempt + 1)
+                    print(f"⚠️  请求超时，将在{wait_time}秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.error("获取Strava活动超时")
+                    return []
+                    
+            except Exception as e:
+                if attempt < max_retries - 1 and "temporarily unavailable" in str(e).lower():
+                    wait_time = retry_delay * (attempt + 1)
+                    print(f"⚠️  Strava服务暂时不可用，将在{wait_time}秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+                    
+                logger.error(f"获取Strava活动失败: {e}")
+                return []
+        
+        return []
     
     def get_activities_in_batches(self, total_limit: int = 50, 
                                 after: Optional[datetime] = None,
@@ -190,26 +239,59 @@ class StravaClient:
         )
     
     def get_activity_details(self, activity_id: str) -> Dict:
-        """获取活动详细信息"""
-        access_token = self._get_headers()['Authorization'].split(' ')[1]
-        self.debug_print(f"获取活动{activity_id}的详细信息")
+        """获取活动详细信息，支持重试机制"""
+        max_retries = 3
+        retry_delay = 5
         
-        url = f"{self.base_url}/activities/{activity_id}"
-        headers = {"Authorization": f"Bearer {access_token}"}
-        
-        try:
-            response = requests.get(url, headers=headers)
-            self.debug_print(f"活动详情响应状态码: {response.status_code}")
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                self.debug_print(f"获取活动详情失败: {response.text}")
-                raise ValueError(f"无法获取活动{activity_id}的详情")
+        for attempt in range(max_retries):
+            try:
+                access_token = self._get_headers()['Authorization'].split(' ')[1]
+                self.debug_print(f"获取活动{activity_id}的详细信息")
                 
-        except Exception as e:
-            logger.error(f"获取Strava活动详情失败: {e}")
-            raise
+                url = f"{self.base_url}/activities/{activity_id}"
+                headers = {"Authorization": f"Bearer {access_token}"}
+                
+                response = requests.get(url, headers=headers, timeout=30)
+                self.debug_print(f"活动详情响应状态码: {response.status_code}")
+                
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code == 401:
+                    # 尝试刷新token
+                    if self._refresh_access_token():
+                        continue
+                    else:
+                        raise ValueError(f"无法获取活动{activity_id}的详情：认证失败")
+                elif response.status_code in [500, 502, 503, 504, 597]:
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delay * (attempt + 1)
+                        self.debug_print(f"服务器错误，{wait_time}秒后重试...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        raise ValueError(f"无法获取活动{activity_id}的详情：服务器错误")
+                else:
+                    self.debug_print(f"获取活动详情失败: {response.text[:200]}")
+                    raise ValueError(f"无法获取活动{activity_id}的详情")
+                    
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    wait_time = retry_delay * (attempt + 1)
+                    self.debug_print(f"请求超时，{wait_time}秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.error(f"获取Strava活动详情超时: {activity_id}")
+                    raise
+                    
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = retry_delay * (attempt + 1)
+                    time.sleep(wait_time)
+                    continue
+                    
+                logger.error(f"获取Strava活动详情失败: {e}")
+                raise
     
     def select_activity_from_api(self) -> Tuple[str, Optional[str]]:
         """从API获取活动并让用户选择，返回(activity_id, activity_name)"""
@@ -335,7 +417,10 @@ class StravaClient:
         return has_device_indicator or (has_likely_type and activity_data.get('upload_id') is not None)
 
     def download_activity_file(self, activity_id: str, save_path: str) -> bool:
-        """下载活动文件到指定路径"""
+        """下载活动文件到指定路径
+        
+        注意：Strava的export_original端点是网页端点，需要使用Cookie认证，不支持API token
+        """
         try:
             self.debug_print(f"下载Strava活动文件: {activity_id}")
             
@@ -347,13 +432,41 @@ class StravaClient:
                     print(f"跳过手动创建的活动: {activity_details.get('name', activity_id)}")
                     return False
             
-            # 尝试下载原始文件
+            activity_name = activity_details.get('name') if activity_details else None
+            download_url = f"https://www.strava.com/activities/{activity_id}/export_original"
+            
+            # export_original是网页端点，必须使用Cookie认证
+            cookie = self.config_manager.get_platform_config("strava").get("cookie", "")
+            if not cookie:
+                print("\n⚠️  Strava Cookie未配置或已过期")
+                print("下载原始文件需要Cookie认证（export_original端点不支持API token）")
+                print("\n请按以下步骤更新Cookie：")
+                print("1. 在浏览器中登录 https://www.strava.com")
+                print("2. 按F12打开开发者工具")
+                print("3. 在Network标签中访问任意活动页面")
+                print("4. 复制请求头中的Cookie值")
+                print("5. 更新.app_config.json文件中的 strava.cookie 字段\n")
+                return False
+            
+            self.debug_print("使用Cookie认证下载原始文件...")
             success, downloaded_file = self._try_download_with_cookie(
-                f"https://www.strava.com/activities/{activity_id}/export_original",
+                download_url,
                 activity_id,
-                self.config_manager.get_platform_config("strava").get("cookie", ""),
-                activity_details.get('name') if activity_details else None
+                cookie,
+                activity_name
             )
+            
+            # 如果Cookie失效，提示用户更新
+            if success and not downloaded_file:
+                # success=True 但 downloaded_file=None 表示需要重新认证
+                print("\n⚠️  Cookie已过期，请更新Cookie")
+                print("请按以下步骤更新Cookie：")
+                print("1. 在浏览器中登录 https://www.strava.com")
+                print("2. 按F12打开开发者工具")
+                print("3. 在Network标签中访问任意活动页面")
+                print("4. 复制请求头中的Cookie值")
+                print("5. 更新.app_config.json文件中的 strava.cookie 字段\n")
+                return False
             
             if success and downloaded_file and os.path.exists(downloaded_file):
                 # 移动到指定路径
@@ -393,8 +506,19 @@ class StravaClient:
             return None
     
     def _try_download_with_cookie(self, url: str, activity_id: str, cookie: str, 
-                                  activity_name: Optional[str] = None, max_retries: int = 3) -> Tuple[bool, Optional[str]]:
-        """尝试使用Cookie下载文件，支持重试机制处理202状态码"""
+                                  activity_name: Optional[str] = None, max_retries: int = 10) -> Tuple[bool, Optional[str]]:
+        """尝试使用Cookie下载文件，支持重试机制处理202状态码
+        
+        Args:
+            url: 下载URL
+            activity_id: 活动ID
+            cookie: 认证Cookie
+            activity_name: 活动名称（可选）
+            max_retries: 最大重试次数，默认10次
+            
+        Returns:
+            (需要重新认证?, 下载的文件路径或None)
+        """
         headers = {
             'Cookie': cookie,
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -403,7 +527,12 @@ class StravaClient:
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
-                    wait_time = 2 ** attempt  # 指数退避：2, 4, 8秒
+                    # 优化等待策略：前3次使用指数退避(2,4,8秒)，之后固定10秒
+                    if attempt <= 3:
+                        wait_time = 2 ** attempt  # 2, 4, 8秒
+                    else:
+                        wait_time = 10  # 之后固定10秒
+                    
                     self.debug_print(f"第{attempt + 1}次重试，等待{wait_time}秒...")
                     time.sleep(wait_time)
                 
@@ -417,26 +546,40 @@ class StravaClient:
                 if response.status_code == 200:
                     content_type = response.headers.get('Content-Type', '').lower()
                     
-                    # 检查是否返回了HTML页面（表示没有原始文件）
+                    # 检查是否返回了HTML页面（表示没有原始文件或需要登录）
                     if 'text/html' in content_type:
-                        self.debug_print("返回HTML页面，活动可能没有原始文件")
+                        self.debug_print("返回HTML页面，检查原因...")
                         
-                        # 检查响应内容确认是否为正常的Strava页面
+                        # 检查响应内容
+                        response_text_lower = response.text.lower() if response.text else ""
                         response_preview = response.text[:200] if response.text else ""
                         self.debug_print(f"响应内容开头: {response_preview}")
                         
-                        # 如果是正常的Strava页面（不是错误页面），说明活动没有原始文件
-                        if any(indicator in response.text.lower() for indicator in [
-                            'strava', 'activity', 'manual', '手动', 'no file', 'not available'
-                        ]):
+                        # 首先检查是否是登录页面（Cookie失效）
+                        login_indicators = [
+                            'log in', 'sign in', 'login', 'signin',
+                            'log_in', 'sign_in', 'create a new account',
+                            'join for free', 'remember me', 'forgot password'
+                        ]
+                        if any(indicator in response_text_lower for indicator in login_indicators):
+                            self.debug_print("检测到登录页面，Cookie已失效")
+                            print("Cookie已过期，请重新配置Cookie")
+                            return True, None  # 返回True表示需要重新认证
+                        
+                        # 检查是否是手动创建的活动页面
+                        manual_indicators = [
+                            'manual activity', 'manually created', '手动创建',
+                            'no file available', 'file not available'
+                        ]
+                        if any(indicator in response_text_lower for indicator in manual_indicators):
                             self.debug_print("确认为手动创建的活动，没有原始文件")
                             print(f"活动 '{activity_name or activity_id}' 是手动创建的，跳过下载")
-                            return False, None  # 返回False表示没有文件可下载，不是Cookie问题
-                        else:
-                            # 如果页面内容异常，可能是Cookie问题
-                            self.debug_print("HTML页面异常，可能是Cookie问题")
-                            print("Cookie可能已过期，请重新输入Cookie")
-                            return True, None  # 返回True表示需要重新输入Cookie
+                            return False, None  # 返回False表示没有文件可下载
+                        
+                        # 其他HTML情况，可能是Cookie问题或其他错误
+                        self.debug_print("返回未知HTML页面，可能是Cookie问题")
+                        print("下载失败：收到HTML页面而非文件，可能是Cookie问题")
+                        return True, None
                     
                     # 检查是否为有效的文件格式
                     valid_content_types = [
@@ -465,11 +608,14 @@ class StravaClient:
                 elif response.status_code == 202:
                     self.debug_print(f"文件正在准备中（状态码202），第{attempt + 1}次尝试")
                     if attempt < max_retries - 1:
-                        print(f"活动 {activity_id} 的文件正在准备中，将在{2 ** (attempt + 1)}秒后重试...")
+                        # 计算下次等待时间
+                        next_wait_time = 2 ** (attempt + 1) if attempt < 3 else 10
+                        remaining_attempts = max_retries - attempt - 1
+                        print(f"活动 {activity_id} 的文件正在准备中，将在{next_wait_time}秒后重试（剩余{remaining_attempts}次尝试）...")
                         continue  # 继续下一次循环，进行重试
                     else:
                         self.debug_print("已达到最大重试次数，文件仍在准备中")
-                        print(f"活动 {activity_id} 的文件准备时间过长，请稍后手动重试")
+                        print(f"活动 {activity_id} 的文件准备时间过长（已尝试{max_retries}次），请稍后手动重试")
                         return True, None
                     
                 elif response.status_code in [401, 403]:

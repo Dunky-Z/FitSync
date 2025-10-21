@@ -221,16 +221,4 @@ class ActivityMatcher:
             self.debug_print(f"最佳匹配: ID={best_match[0]}, 置信度={best_match[1].confidence:.2f}")
             return best_match
         
-        return None
-    
-    def set_threshold(self, key: str, value: float) -> None:
-        """设置匹配阈值"""
-        if key in self.thresholds:
-            self.thresholds[key] = value
-            self.debug_print(f"设置阈值 {key} = {value}")
-        else:
-            raise ValueError(f"未知的阈值参数: {key}")
-    
-    def get_thresholds(self) -> Dict[str, float]:
-        """获取当前阈值配置"""
-        return self.thresholds.copy() 
+        return None 
