@@ -26,7 +26,8 @@ class BidirectionalSync:
         self.sync_manager = SyncManager(config_manager, debug)
         self.activity_matcher = ActivityMatcher(debug)
         self.strava_client = StravaClient(config_manager, debug)
-        self.garmin_client = GarminSyncClient(config_manager, debug)
+        self.garmin_client = GarminSyncClient(config_manager, debug, config_key="garmin")
+        self.garmin_cn_client = GarminSyncClient(config_manager, debug, config_key="garmin_cn")
         self.onedrive_client = OneDriveClient(config_manager, debug)
         self.igpsport_client = IGPSportClient(config_manager, debug)
         self.intervals_icu_client = IntervalsIcuClient(config_manager, debug)
@@ -38,7 +39,10 @@ class BidirectionalSync:
             ("strava", "onedrive"),
             ("garmin", "onedrive"),
             ("strava", "igpsport"),
-            ("igpsport", "intervals_icu")
+            ("igpsport", "intervals_icu"),
+            ("garmin_cn", "garmin"),
+            ("garmin", "garmin_cn"),
+            ("garmin_cn", "strava")
         ]
     
     def debug_print(self, message: str) -> None:
@@ -190,6 +194,10 @@ class BidirectionalSync:
                 return self.garmin_client.get_activities(
                     limit=limit, after=start_time, before=end_time
                 )
+            elif platform == "garmin_cn":
+                return self.garmin_cn_client.get_activities(
+                    limit=limit, after=start_time, before=end_time
+                )
             elif platform == "igpsport":
                 return self.igpsport_client.get_activities(
                     limit=limit, after=start_time, before=end_time
@@ -218,6 +226,9 @@ class BidirectionalSync:
                     
             elif source_platform == "garmin":
                 metadata = self.garmin_client.convert_to_activity_metadata(activity_data)
+                activity_id = str(activity_data.get("activityId", ""))
+            elif source_platform == "garmin_cn":
+                metadata = self.garmin_cn_client.convert_to_activity_metadata(activity_data)
                 activity_id = str(activity_data.get("activityId", ""))
             elif source_platform == "igpsport":
                 metadata = self.igpsport_client.convert_to_activity_metadata(activity_data)
@@ -293,6 +304,8 @@ class BidirectionalSync:
                 success = self.strava_client.download_activity_file(activity_id, cache_path)
             elif platform == "garmin":
                 success = self.garmin_client.download_activity_file(activity_id, cache_path)
+            elif platform == "garmin_cn":
+                success = self.garmin_cn_client.download_activity_file(activity_id, cache_path)
             elif platform == "igpsport":
                 success = self.igpsport_client.download_activity_file(activity_id, cache_path)
             else:
@@ -380,6 +393,8 @@ class BidirectionalSync:
                 return False
             elif platform == "garmin":
                 return self.garmin_client.upload_file(file_path)
+            elif platform == "garmin_cn":
+                return self.garmin_cn_client.upload_file(file_path)
             elif platform == "onedrive":
                 # 传递activity_name和fingerprint，让OneDriveClient处理所有逻辑
                 fingerprint = self._extract_fingerprint_from_file_path(file_path)
@@ -432,6 +447,10 @@ class BidirectionalSync:
     
     def _check_api_limits(self, platform: str) -> bool:
         """检查API限制"""
+        # garmin和garmin_cn目前没有API限制
+        if platform in ["garmin", "garmin_cn"]:
+            return True
+            
         can_request = self.sync_manager.can_make_api_request(platform)
         
         if not can_request:

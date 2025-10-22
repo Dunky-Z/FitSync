@@ -212,3 +212,7 @@ activity_cache/
 # Garmin会话文件 (包含敏感的认证信息)
 .garmin_sessions/
 *.garth
+
+# 参考项目
+garmin-connect-cn/
+dailysync-rev/

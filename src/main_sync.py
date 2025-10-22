@@ -77,12 +77,15 @@ def select_sync_directions() -> list:
     return questionary.checkbox(
         "选择要执行的同步方向:",
         choices=[
-            {"name": "Strava -> Garmin", "value": "strava_to_garmin", "checked": False},
-            {"name": "Garmin -> Strava", "value": "garmin_to_strava", "checked": False},
+            {"name": "Strava -> Garmin Global", "value": "strava_to_garmin", "checked": False},
+            {"name": "Garmin Global -> Strava", "value": "garmin_to_strava", "checked": False},
             {"name": "Strava -> OneDrive", "value": "strava_to_onedrive", "checked": False},
-            {"name": "Garmin -> OneDrive", "value": "garmin_to_onedrive", "checked": False},
-            {"name": "Strava -> IGPSport", "value": "strava_to_igpsport", "checked": False},
-            {"name": "IGPSport -> Intervals.icu", "value": "igpsport_to_intervals_icu", "checked": False}
+            {"name": "Garmin Global -> OneDrive", "value": "garmin_to_onedrive", "checked": False},
+            {"name": "Strava -> IGPSPort", "value": "strava_to_igpsport", "checked": False},
+            {"name": "IGPSport -> Intervals.icu", "value": "igpsport_to_intervals_icu", "checked": False},
+            {"name": "Garmin CN -> Garmin Global", "value": "garmin_cn_to_garmin", "checked": False},
+            {"name": "Garmin Global -> Garmin CN", "value": "garmin_to_garmin_cn", "checked": False},
+            {"name": "Garmin CN -> Strava", "value": "garmin_cn_to_strava", "checked": False}
         ],
         instruction="(使用空格键选择，回车键确认)"
     ).ask()
@@ -312,14 +315,26 @@ def check_prerequisites(sync_engine: BidirectionalSync, directions: list = None)
     # 检查Garmin配置（如果需要）
     if "garmin" in required_platforms:
         try:
-            print("检查Garmin配置...")
+            print("检查Garmin Global配置...")
             garmin_config = sync_engine.config_manager.get_platform_config("garmin")
             if not garmin_config.get("username") or not garmin_config.get("password"):
-                issues.append("Garmin Connect配置不完整")
+                issues.append("Garmin Global配置不完整")
             else:
-                print("Garmin配置检查通过，连接将在同步时建立")
+                print("Garmin Global配置检查通过，连接将在同步时建立")
         except Exception as e:
-            issues.append(f"Garmin Connect配置问题: {e}")
+            issues.append(f"Garmin Global配置问题: {e}")
+    
+    # 检查Garmin CN配置（如果需要）
+    if "garmin_cn" in required_platforms:
+        try:
+            print("检查Garmin CN配置...")
+            garmin_cn_config = sync_engine.config_manager.get_platform_config("garmin_cn")
+            if not garmin_cn_config.get("username") or not garmin_cn_config.get("password"):
+                issues.append("Garmin CN配置不完整")
+            else:
+                print("Garmin CN配置检查通过，连接将在同步时建立")
+        except Exception as e:
+            issues.append(f"Garmin CN配置问题: {e}")
     
     # 检查OneDrive配置（如果需要）
     if "onedrive" in required_platforms:
@@ -385,7 +400,9 @@ def main():
     parser.add_argument('--debug', action='store_true', help='启用调试模式，显示详细信息')
     parser.add_argument('--auto', action='store_true', help='自动模式，使用默认设置直接同步')
     parser.add_argument('--directions', nargs='+', 
-                       choices=['strava_to_garmin', 'garmin_to_strava', 'strava_to_onedrive', 'garmin_to_onedrive', 'strava_to_igpsport', 'igpsport_to_intervals_icu'],
+                       choices=['strava_to_garmin', 'garmin_to_strava', 'strava_to_onedrive', 'garmin_to_onedrive', 
+                               'strava_to_igpsport', 'igpsport_to_intervals_icu', 'garmin_cn_to_garmin', 
+                               'garmin_to_garmin_cn', 'garmin_cn_to_strava'],
                        help='指定同步方向')
     parser.add_argument('--batch-size', type=int, default=10, help='批处理大小')
     args = parser.parse_args()

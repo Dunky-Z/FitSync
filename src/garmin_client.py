@@ -389,36 +389,56 @@ class GarminClient:
         self.debug_print(f"文件格式检查通过: {file_extension.upper()}")
 
         try:
-            self.debug_print("正在读取文件内容...")
-            with open(activity_path, 'rb') as file:
-                file_data = file.read()
-                self.debug_print(f"文件读取成功，大小: {len(file_data)} bytes")
-                
-                fields = {
-                    'file': (file_base_name, file_data, 'application/octet-stream')
-                }
-                self.debug_print("文件数据准备完成")
+                self.debug_print("正在读取文件内容...")
+                with open(activity_path, 'rb') as file:
+                    file_data = file.read()
+                    self.debug_print(f"文件读取成功，大小: {len(file_data)} bytes")
+                    
+                    # 为文件生成更合适的文件名（时间戳+原扩展名）
+                    import time
+                    timestamp = str(int(time.time() * 1000))
+                    safe_filename = f"activity_{timestamp}.{file_extension.lower()}"
+                    
+                    # 根据文件类型设置正确的 MIME type
+                    if file_extension.upper() == "FIT":
+                        content_type = 'application/vnd.ant.fit'
+                    elif file_extension.upper() == "GPX":
+                        content_type = 'application/gpx+xml'
+                    elif file_extension.upper() == "TCX":
+                        content_type = 'application/vnd.garmin.tcx+xml'
+                    else:
+                        content_type = 'application/octet-stream'
+                    
+                    fields = {
+                        'file': (safe_filename, file_data, content_type)
+                    }
+                    self.debug_print(f"文件数据准备完成 - 文件名: {safe_filename}, Content-Type: {content_type}")
 
                 # 构建上传URL
                 url_path = GARMIN_URL_DICT["garmin_connect_upload"]
                 upload_url = f"https://connectapi.{self.garthClient.client.domain}{url_path}"
                 self.debug_print(f"上传URL: {upload_url}")
                 
-                # 准备headers
-                self.headers['Authorization'] = str(self.garthClient.client.oauth2_token)
+                # 准备headers - 移除可能导致问题的headers
+                upload_headers = {
+                    'Authorization': str(self.garthClient.client.oauth2_token),
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+                # 不要设置 Content-Type，让 requests 自动处理 multipart/form-data
+                
                 auth_preview = str(self.garthClient.client.oauth2_token)[:30] + "..." if len(str(self.garthClient.client.oauth2_token)) > 30 else str(self.garthClient.client.oauth2_token)
                 self.debug_print(f"Authorization预览: {auth_preview}")
                 
                 if self.debug:
                     self.debug_print("请求Headers:")
-                    for key, value in self.headers.items():
+                    for key, value in upload_headers.items():
                         if key == 'Authorization':
                             self.debug_print(f"   - {key}: {value[:30]}..." if len(value) > 30 else f"   - {key}: {value}")
                         else:
                             self.debug_print(f"   - {key}: {value}")
                 
                 self.debug_print("发送上传请求...")
-                response = requests.post(upload_url, headers=self.headers, files=fields, timeout=60)
+                response = requests.post(upload_url, headers=upload_headers, files=fields, timeout=60)
                 res_code = response.status_code
                 
                 # 详细响应信息只在debug模式下显示

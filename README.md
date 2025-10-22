@@ -15,8 +15,8 @@
 | Source   \ Target | **Strava**    | **Garmin Global** | **Garmin CN** | **IGPSport** | **Intervals.icu** | **OneDrive** |
 | ----------------- | ------------- | ----------------- | ------------- | ------------ | ----------------- | ------------ |
 | **Strava**        | x             | 🔁 Bi-dir         | ❌           | ➡️ Single-dir | ❌               | ➡️ Single-dir|
-| **Garmin Global** | 🔁 Bi-dir     | x                 | ❌           | ➡️ Single-dir | ❌               | ➡️ Single-dir|
-| **Garmin CN**     | ❌            | ❌                | x            | ❌            | ❌               | ❌           |
+| **Garmin Global** | 🔁 Bi-dir     | x                 | 🔁 Bi-dir     | ➡️ Single-dir | ❌               | ➡️ Single-dir|
+| **Garmin CN**     | ➡️ Single-dir | 🔁 Bi-dir         | x            | ❌            | ❌               | ❌           |
 | **IGPSport**      | ❌            | ❌                | ❌           | x             | ➡️ Single-dir    | ❌          |
 | **Intervals.icu** | ❌            | ❌                | ❌           | ❌            | x                | ❌           |
 | **OneDrive**      | ❌            | ❌                | ❌           | ❌            | ❌               | x            |
@@ -66,9 +66,14 @@ pip install -r requirements.txt
    - refresh_token：刷新令牌
 
 2. **Garmin Connect配置**
-   - username：用户名
-   - password：密码
-   - auth_domain：认证域（GLOBAL或CN）
+   - **garmin（佳明国际版）**
+     - username：用户名
+     - password：密码
+     - auth_domain：GLOBAL
+   - **garmin_cn（佳明中国版）**
+     - username：用户名
+     - password：密码
+     - auth_domain：CN
 
 3. **OneDrive配置**
    - client_id：Azure应用ID
@@ -121,10 +126,11 @@ python src/file_converter.py --batch /path/to/files gpx
 
 ### 当前支持的同步方向
 
-- **Strava → Garmin Connect**：将Strava活动同步到Garmin
-- **Garmin Connect → Strava**：将Garmin活动同步到Strava
+- **Strava ↔ Garmin Global**：Strava与Garmin国际版双向同步
+- **Garmin CN ↔ Garmin Global**：佳明中国与佳明国际双向同步
+- **Garmin CN → Strava**：佳明中国到Strava单向同步
 - **Strava → OneDrive**：将Strava活动文件备份到OneDrive
-- **Garmin Connect → OneDrive**：将Garmin活动文件备份到OneDrive
+- **Garmin Global → OneDrive**：将Garmin活动文件备份到OneDrive
 - **Strava → IGPSport**：将Strava活动同步到IGPSport
 - **IGPSport → Intervals.icu**：将IGPSport活动同步到Intervals.icu
 
@@ -225,12 +231,15 @@ python src/main_sync.py [选项]
   --clear-garmin-session   清除Garmin会话
 
 同步方向:
-  strava_to_garmin        Strava到Garmin
-  garmin_to_strava        Garmin到Strava
+  strava_to_garmin        Strava到Garmin Global
+  garmin_to_strava        Garmin Global到Strava
   strava_to_onedrive      Strava到OneDrive
-  garmin_to_onedrive      Garmin到OneDrive
+  garmin_to_onedrive      Garmin Global到OneDrive
   strava_to_igpsport      Strava到IGPSport
   igpsport_to_intervals_icu IGPSport到Intervals.icu
+  garmin_cn_to_garmin     Garmin CN到Garmin Global
+  garmin_to_garmin_cn     Garmin Global到Garmin CN
+  garmin_cn_to_strava     Garmin CN到Strava
 ```
 
 ### file_converter.py 参数
@@ -275,3 +284,5 @@ python src/main_sync.py --cleanup-cache
 - [Microsoft Graph API](https://docs.microsoft.com/en-us/graph/)
 - [Intervals.icu API](https://intervals.icu/api)
 - [mywhoosh to garmin](https://github.com/mvace/mywhoosh_to_garmin)
+- [DailySync](https://github.com/gooin/dailysync-rev)
+- [Garmin Connect CN](https://github.com/gooin/garmin-connect-cn)
