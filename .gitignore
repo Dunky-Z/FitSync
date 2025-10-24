@@ -213,6 +213,8 @@ activity_cache/
 .garmin_sessions/
 *.garth
 
+.cursorrules
+
 # 参考项目
 garmin-connect-cn/
 dailysync-rev/

@@ -14,6 +14,14 @@
 
 将下面链接中的`client_id`值换成上图中的客户 ID，然后浏览器中访问这个链接：
 
+**注意：** 如果需要上传活动到 Strava，必须使用包含 `activity:write` 权限的授权链接：
+
+```txt
+http://www.strava.com/oauth/authorize?client_id=xxxxxxx&response_type=code&redirect_uri=http://localhost/exchange_token&approval_prompt=force&scope=activity:read_all,activity:write
+```
+
+如果只需要读取活动（不上传），可以只使用读取权限：
+
 ```txt
 http://www.strava.com/oauth/authorize?client_id=xxxxxxx&response_type=code&redirect_uri=http://localhost/exchange_token&approval_prompt=force&scope=activity:read_all
 ```

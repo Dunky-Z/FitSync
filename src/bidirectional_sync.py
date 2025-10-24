@@ -388,9 +388,8 @@ class BidirectionalSync:
         """上传文件到目标平台"""
         try:
             if platform == "strava":
-                # Strava上传需要特殊处理，可能需要通过网页端
-                self.debug_print("Strava上传功能待实现")
-                return False
+                # 使用Strava API上传
+                return self.strava_client.upload_activity(file_path, activity_name=activity_name)
             elif platform == "garmin":
                 return self.garmin_client.upload_file(file_path)
             elif platform == "garmin_cn":

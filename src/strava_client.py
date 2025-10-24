@@ -65,9 +65,11 @@ class StravaClient:
             if response.status_code == 200:
                 token_data = response.json()
                 
-                # 更新配置中的访问令牌
+                # 更新配置中的访问令牌和权限范围
                 config["access_token"] = token_data['access_token']
                 config["refresh_token"] = token_data['refresh_token']
+                if 'scope' in token_data:
+                    config["scope"] = token_data['scope']
                 self.config_manager.save_platform_config("strava", config)
                 
                 print("Strava访问令牌刷新成功")
@@ -721,4 +723,152 @@ class StravaClient:
             last_activity_time = activities[-1]['start_date']
             print(f"活动时间范围: {first_activity_time} 到 {last_activity_time}")
         
-        return activities 
+        return activities
+    
+    def upload_activity(self, file_path: str, activity_name: str = None, 
+                       description: str = None, activity_type: str = None) -> bool:
+        """上传活动到Strava
+        
+        Args:
+            file_path: 活动文件路径（支持FIT、GPX、TCX格式）
+            activity_name: 活动名称（可选）
+            description: 活动描述（可选）
+            activity_type: 活动类型（可选，如ride、run等）
+        
+        Returns:
+            上传是否成功
+        """
+        try:
+            self.debug_print(f"开始上传活动到Strava: {file_path}")
+            
+            # 检查是否有写入权限
+            config = self.config_manager.get_platform_config("strava")
+            scope = config.get('scope', '')
+            if 'activity:write' not in scope and scope != '':
+                print("⚠️  Strava token缺少 'activity:write' 权限，无法上传活动")
+                print("请按照 Docs/Strava.md 重新授权，确保授权链接包含 activity:write 权限")
+                return False
+            
+            if not os.path.exists(file_path):
+                self.debug_print(f"文件不存在: {file_path}")
+                return False
+            
+            # 获取文件扩展名
+            file_ext = os.path.splitext(file_path)[1].lower()
+            if file_ext not in ['.fit', '.gpx', '.tcx']:
+                self.debug_print(f"不支持的文件格式: {file_ext}")
+                print(f"Strava不支持的文件格式: {file_ext}，仅支持.fit、.gpx、.tcx")
+                return False
+            
+            # 确定数据类型
+            if file_ext == '.fit':
+                data_type = 'fit'
+            elif file_ext == '.gpx':
+                data_type = 'gpx'
+            elif file_ext == '.tcx':
+                data_type = 'tcx'
+            
+            # 获取访问令牌（只需要Authorization，不要Content-Type）
+            access_token = self._get_headers()['Authorization'].split(' ')[1]
+            
+            # 准备上传数据
+            upload_url = f"{self.base_url}/uploads"
+            
+            # 准备表单数据
+            data = {
+                'data_type': data_type
+            }
+            
+            if activity_name:
+                data['name'] = activity_name
+            if description:
+                data['description'] = description
+            if activity_type:
+                data['activity_type'] = activity_type
+            
+            self.debug_print(f"上传URL: {upload_url}")
+            self.debug_print(f"数据类型: {data_type}")
+            
+            # 打开文件
+            with open(file_path, 'rb') as f:
+                files = {
+                    'file': (os.path.basename(file_path), f, 'application/octet-stream')
+                }
+                
+                # 只设置Authorization，让requests自动处理Content-Type
+                headers = {
+                    'Authorization': f'Bearer {access_token}'
+                }
+                
+                # 发送上传请求
+                response = requests.post(
+                    upload_url,
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=120  # 上传可能需要更长时间
+                )
+                
+                self.debug_print(f"响应状态码: {response.status_code}")
+                
+                if response.status_code == 201:
+                    result = response.json()
+                    upload_id = result.get('id')
+                    self.debug_print(f"上传成功，Upload ID: {upload_id}")
+                    
+                    # 检查处理状态
+                    status = result.get('status', '')
+                    if status == 'Your activity is ready.':
+                        print(f"活动已成功上传到Strava")
+                        return True
+                    elif status == 'Your activity is still being processed.':
+                        print(f"活动已上传到Strava，正在处理中")
+                        return True
+                    elif 'duplicate' in status.lower():
+                        print(f"活动已存在于Strava（重复活动）")
+                        return True
+                    else:
+                        print(f"活动已上传到Strava，状态: {status}")
+                        return True
+                        
+                elif response.status_code == 401:
+                    # Token可能过期，尝试刷新
+                    self.debug_print("认证失败，尝试刷新token")
+                    if self._refresh_access_token():
+                        # 递归重试一次
+                        return self.upload_activity(file_path, activity_name, description, activity_type)
+                    else:
+                        print("❌ Strava认证失败")
+                        print("可能原因：")
+                        print("  1. Token缺少 'activity:write' 权限")
+                        print("  2. Token已失效")
+                        print("请按照 Docs/Strava.md 重新授权，确保授权链接包含以下权限：")
+                        print("  scope=activity:read_all,activity:write")
+                        return False
+                        
+                else:
+                    error_msg = f"上传失败: HTTP {response.status_code}"
+                    try:
+                        error_detail = response.json()
+                        self.debug_print(f"错误详情: {error_detail}")
+                        
+                        # 检查是否是重复活动
+                        errors = error_detail.get('errors', [])
+                        for error in errors:
+                            if 'duplicate' in error.get('code', '').lower() or \
+                               'duplicate' in error.get('field', '').lower():
+                                print("活动已存在于Strava（重复活动）")
+                                return True
+                        
+                        error_msg += f" - {error_detail}"
+                    except:
+                        error_msg += f" - {response.text[:200]}"
+                    
+                    print(error_msg)
+                    return False
+                    
+        except Exception as e:
+            self.debug_print(f"上传活动到Strava失败: {e}")
+            logger.error(f"上传活动到Strava失败: {e}")
+            print(f"上传到Strava失败: {e}")
+            return False 
